@@ -10,6 +10,8 @@ import {
   createError,
 } from '@/lib/errors';
 import { logger } from '@/lib/logger';
+import { getSession } from '@/lib/auth';
+import { writeGeneration } from '@/lib/db/generation-writer';
 import type { PlatformCode, GenerateResponse } from '@/types';
 
 const platformCodeSchema = z.enum(
@@ -33,6 +35,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const start = Date.now();
 
   logger.info('generate request received', { requestId });
+
+  // Resolve session for cloud write (null = anonymous, write will be skipped)
+  const session = await getSession();
+  const userId = session?.id ?? null;
 
   let body: unknown;
   try {
@@ -125,6 +131,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     model: serviceResult.model,
     partialFailure: serviceResult.partialFailure,
   };
+
+  // Fire-and-forget: persist generation record for authenticated users
+  writeGeneration({
+    userId,
+    requestId,
+    content,
+    platforms,
+    source: parsed.data.source ?? 'manual',
+    result: serviceResult,
+  });
 
   const success = createSuccess(response, requestId);
   logger.info('generate success', {

@@ -59,6 +59,18 @@ export interface GenerateResponse {
   partialFailure: boolean;
 }
 
+// --- Auth types ---
+
+export interface AuthUser {
+  id: string;    // UUID from auth.users
+  email: string;
+}
+
+export interface AuthSession {
+  user: AuthUser;
+  expiresAt: number; // Unix timestamp
+}
+
 // --- Local history ---
 
 export interface HistoryRecord {
@@ -67,4 +79,46 @@ export interface HistoryRecord {
   inputSnippet: string; // first 100 chars of input
   createdAt: string;    // ISO 8601
   results: Partial<Record<PlatformCode, GeneratePlatformOutput>>;
+}
+
+// --- Plan capability ---
+
+export interface PlanCapability {
+  planCode: string;
+  displayName: string;
+  maxPlatforms: number | null;           // null = unlimited
+  monthlyGenerationLimit: number | null; // null = unlimited
+  canUseHistory: boolean;
+  canUseApi: boolean;
+  canUseTeam: boolean;
+  speedTier: 'standard' | 'fast' | 'priority' | 'dedicated';
+}
+
+// --- Cloud history ---
+
+export interface HistorySummaryItem {
+  id: string;
+  inputSource: 'manual' | 'extract';
+  platforms: string[];
+  platformCount: number;
+  status: 'success' | 'partial' | 'failed';
+  modelName: string | null;
+  durationMs: number;
+  createdAt: string; // ISO 8601
+}
+
+// --- Usage data ---
+
+export interface UsageData {
+  currentMonth: string;              // YYYY-MM
+  monthlyGenerationCount: number;
+  totalGenerationCount: number;
+  lastGenerationAt: string | null;   // ISO 8601 or null
+  plan: {
+    code: string;
+    displayName: string;
+    monthlyGenerationLimit: number | null;
+    platformLimit: number | null;
+    speedTier: string;
+  };
 }
