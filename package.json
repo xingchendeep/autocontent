@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:integration": "vitest run --config tests/integration/supabase-infrastructure/vitest.config.ts",
+    "supabase:start": "supabase start",
+    "supabase:push": "supabase db push --local"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
@@ -16,14 +19,25 @@
     "react-dom": "^19.2.3",
     "zod": "^3.24.2"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "supabase"
+    ]
+  },
   "devDependencies": {
+    "@supabase/supabase-js": "^2.99.1",
     "@tailwindcss/postcss": "^4.2.1",
     "@types/node": "^22",
+    "@types/pg": "^8.18.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "^16.1.6",
+    "fast-check": "^4.6.0",
+    "pg": "^8.20.0",
+    "supabase": "^2.78.1",
     "tailwindcss": "^4.2.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
   }
 }

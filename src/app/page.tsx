@@ -75,10 +75,11 @@ function reducer(state: PageState, action: Action): PageState {
 
 export default function HomePage() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const [history, setHistory] = useState<HistoryRecord[]>(() => {
-    if (typeof window === 'undefined') return [];
-    return readHistory();
-  });
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+
+  useEffect(() => {
+    setHistory(readHistory());
+  }, []);
 
   useEffect(() => { trackPageView(); }, []);
 
