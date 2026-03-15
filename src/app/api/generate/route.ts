@@ -12,6 +12,11 @@ import {
 import { logger } from '@/lib/logger';
 import { getSession } from '@/lib/auth';
 import { writeGeneration } from '@/lib/db/generation-writer';
+import { getPlanCapability } from '@/lib/billing/plan-capability';
+import { createServiceRoleClient } from '@/lib/db/client';
+import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
+import { checkContent } from '@/lib/moderation';
+import { writeAuditLog } from '@/lib/db/audit-logger';
 import type { PlatformCode, GenerateResponse } from '@/types';
 
 const platformCodeSchema = z.enum(
@@ -36,73 +41,168 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   logger.info('generate request received', { requestId });
 
-  // Resolve session for cloud write (null = anonymous, write will be skipped)
+  // Resolve session — null = anonymous
   const session = await getSession();
   const userId = session?.id ?? null;
+
+  // Extract IP for rate limiting
+  const ip =
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+    req.headers.get('x-real-ip') ??
+    'unknown';
 
   let body: unknown;
   try {
     body = await req.json();
   } catch {
     logger.warn('invalid json body', { requestId });
-    const err = createError(
-      ERROR_CODES.INVALID_INPUT,
-      'Request body must be valid JSON',
-      requestId,
+    return NextResponse.json(
+      createError(ERROR_CODES.INVALID_INPUT, 'Request body must be valid JSON', requestId),
+      { status: ERROR_STATUS.INVALID_INPUT, headers: { 'x-request-id': requestId } },
     );
-    return NextResponse.json(err, {
-      status: ERROR_STATUS.INVALID_INPUT,
-      headers: { 'x-request-id': requestId },
-    });
   }
 
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {
     const flat = parsed.error.flatten();
-    // Check for content too long specifically
     const contentIssues = parsed.error.issues.filter(
       (i) => i.path[0] === 'content' && i.code === 'too_big',
     );
     if (contentIssues.length > 0) {
-      const err = createError(
-        ERROR_CODES.CONTENT_TOO_LONG,
-        'Content exceeds the maximum allowed length of 100000 characters',
-        requestId,
+      return NextResponse.json(
+        createError(
+          ERROR_CODES.CONTENT_TOO_LONG,
+          'Content exceeds the maximum allowed length of 100000 characters',
+          requestId,
+        ),
+        { status: ERROR_STATUS.CONTENT_TOO_LONG, headers: { 'x-request-id': requestId } },
       );
-      return NextResponse.json(err, {
-        status: ERROR_STATUS.CONTENT_TOO_LONG,
-        headers: { 'x-request-id': requestId },
-      });
     }
-    // Check for invalid platform codes
-    const platformIssues = parsed.error.issues.filter(
-      (i) => i.path[0] === 'platforms',
-    );
+    const platformIssues = parsed.error.issues.filter((i) => i.path[0] === 'platforms');
     if (platformIssues.length > 0) {
-      const err = createError(
-        ERROR_CODES.INVALID_PLATFORM,
-        'One or more platform codes are not supported',
-        requestId,
-        { details: flat },
+      return NextResponse.json(
+        createError(ERROR_CODES.INVALID_PLATFORM, 'One or more platform codes are not supported', requestId, {
+          details: flat,
+        }),
+        { status: ERROR_STATUS.INVALID_PLATFORM, headers: { 'x-request-id': requestId } },
       );
-      return NextResponse.json(err, {
-        status: ERROR_STATUS.INVALID_PLATFORM,
-        headers: { 'x-request-id': requestId },
-      });
     }
-    const err = createError(
-      ERROR_CODES.INVALID_INPUT,
-      'Request body validation failed',
-      requestId,
-      { details: flat },
+    return NextResponse.json(
+      createError(ERROR_CODES.INVALID_INPUT, 'Request body validation failed', requestId, { details: flat }),
+      { status: ERROR_STATUS.INVALID_INPUT, headers: { 'x-request-id': requestId } },
     );
-    return NextResponse.json(err, {
-      status: ERROR_STATUS.INVALID_INPUT,
-      headers: { 'x-request-id': requestId },
-    });
   }
 
   const { content, platforms, options } = parsed.data;
+
+  // ── Rate limiting (after Zod validation, before plan check and moderation) ──
+  if (!userId) {
+    // Anonymous: IP only, 5 req/h
+    const rl = await checkRateLimit(
+      buildRateLimitKey('generate', 'ip', ip, '1h'),
+      5,
+      3600,
+    );
+    if (!rl.allowed) {
+      return NextResponse.json(
+        createError(ERROR_CODES.RATE_LIMITED, '请求过于频繁，请稍后再试', requestId, {
+          retryAfter: rl.resetAt,
+        }),
+        { status: ERROR_STATUS.RATE_LIMITED, headers: { 'x-request-id': requestId } },
+      );
+    }
+  } else {
+    // Determine plan tier for rate limit thresholds
+    let planCode = 'free';
+    try {
+      const cap = await getPlanCapability(userId);
+      planCode = cap.planCode;
+    } catch {
+      // Non-fatal — fall back to free-tier limits
+    }
+
+    const isPaid = planCode !== 'free';
+    const userLimit = isPaid ? 100 : 20;
+    const ipLimit = isPaid ? 30 : 10;
+
+    const [userRl, ipRl] = await Promise.all([
+      checkRateLimit(buildRateLimitKey('generate', 'user', userId, '1h'), userLimit, 3600),
+      checkRateLimit(buildRateLimitKey('generate', 'ip', ip, '1h'), ipLimit, 3600),
+    ]);
+
+    const blocked = !userRl.allowed ? userRl : !ipRl.allowed ? ipRl : null;
+    if (blocked) {
+      return NextResponse.json(
+        createError(ERROR_CODES.RATE_LIMITED, '请求过于频繁，请稍后再试', requestId, {
+          retryAfter: blocked.resetAt,
+        }),
+        { status: ERROR_STATUS.RATE_LIMITED, headers: { 'x-request-id': requestId } },
+      );
+    }
+  }
+
+  // ── Plan capability enforcement (authenticated users only) ──
+  if (userId) {
+    let capability;
+    try {
+      capability = await getPlanCapability(userId);
+    } catch {
+      return NextResponse.json(
+        createError(ERROR_CODES.SERVICE_UNAVAILABLE, '无法获取套餐信息', requestId),
+        { status: ERROR_STATUS.SERVICE_UNAVAILABLE, headers: { 'x-request-id': requestId } },
+      );
+    }
+
+    if (capability.maxPlatforms !== null && platforms.length > capability.maxPlatforms) {
+      return NextResponse.json(
+        createError(ERROR_CODES.PLAN_LIMIT_REACHED, '已超出套餐平台数量限制', requestId),
+        { status: ERROR_STATUS.PLAN_LIMIT_REACHED, headers: { 'x-request-id': requestId } },
+      );
+    }
+
+    if (capability.monthlyGenerationLimit !== null) {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      const db = createServiceRoleClient();
+      const { data: stats } = await db
+        .from('usage_stats')
+        .select('current_month, monthly_generation_count')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      const monthlyCount =
+        stats && stats.current_month === currentMonth
+          ? (stats.monthly_generation_count as number)
+          : 0;
+
+      if (monthlyCount >= capability.monthlyGenerationLimit) {
+        return NextResponse.json(
+          createError(ERROR_CODES.PLAN_LIMIT_REACHED, '已达到本月生成次数上限', requestId),
+          { status: ERROR_STATUS.PLAN_LIMIT_REACHED, headers: { 'x-request-id': requestId } },
+        );
+      }
+    }
+  }
+
+  // ── Content moderation (after rate limit, before AI generation) ──
+  const modResult = checkContent(content);
+  if (modResult.blocked) {
+    const errResponse = createError(ERROR_CODES.CONTENT_BLOCKED, '内容包含不允许的词汇，请修改后重试', requestId);
+    // Fire-and-forget audit — matchedKeywords NOT stored
+    void writeAuditLog({
+      action: 'CONTENT_BLOCKED',
+      userId,
+      ipAddress: ip,
+      metadata: {
+        requestId,
+        reason: modResult.reason,
+        keywordCount: modResult.matchedKeywords?.length ?? 0,
+      },
+    });
+    return NextResponse.json(errResponse, {
+      status: ERROR_STATUS.CONTENT_BLOCKED,
+      headers: { 'x-request-id': requestId },
+    });
+  }
 
   logger.info('generate start', { requestId, platforms, contentLength: content.length });
 
@@ -110,14 +210,32 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // All platforms failed
   if (Object.keys(serviceResult.results).length === 0) {
-    logger.error('all platforms failed', { requestId, platforms, errors: serviceResult.errors, durationMs: Date.now() - start });
-    const err = createError(
+    const durationMs = Date.now() - start;
+    logger.error('all platforms failed', {
+      requestId,
+      platforms,
+      errors: serviceResult.errors,
+      durationMs,
+    });
+    const errResponse = createError(
       ERROR_CODES.AI_PROVIDER_ERROR,
       'All platform generations failed',
       requestId,
       { errors: serviceResult.errors as Record<string, unknown> },
     );
-    return NextResponse.json(err, {
+    // Fire-and-forget audit
+    void writeAuditLog({
+      action: 'GENERATION_FAILED',
+      userId,
+      ipAddress: ip,
+      metadata: {
+        requestId,
+        errorCode: ERROR_CODES.AI_PROVIDER_ERROR,
+        platformCount: platforms.length,
+        durationMs,
+      },
+    });
+    return NextResponse.json(errResponse, {
       status: ERROR_STATUS.AI_PROVIDER_ERROR,
       headers: { 'x-request-id': requestId },
     });
@@ -132,7 +250,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     partialFailure: serviceResult.partialFailure,
   };
 
-  // Fire-and-forget: persist generation record for authenticated users
   writeGeneration({
     userId,
     requestId,
@@ -142,7 +259,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     result: serviceResult,
   });
 
-  const success = createSuccess(response, requestId);
   logger.info('generate success', {
     requestId,
     platforms,
@@ -151,7 +267,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     durationMs: serviceResult.durationMs,
     model: serviceResult.model,
   });
-  return NextResponse.json(success, {
+
+  return NextResponse.json(createSuccess(response, requestId), {
     status: 200,
     headers: { 'x-request-id': requestId },
   });

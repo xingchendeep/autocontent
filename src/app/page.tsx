@@ -7,6 +7,8 @@ import PlatformSelector from '@/components/generate/PlatformSelector';
 import GenerateButton from '@/components/generate/GenerateButton';
 import ResultCard from '@/components/generate/ResultCard';
 import { readHistory, prependHistory } from '@/lib/localHistory';
+import { useAuth } from '@/hooks/useAuth';
+import { useCloudHistory } from '@/hooks/useCloudHistory';
 import {
   trackPageView,
   trackGenerateClick,
@@ -16,9 +18,12 @@ import {
 import type {
   PlatformCode,
   GenerateResponse,
+  GeneratePlatformOutput,
   ApiSuccess,
   ApiError,
   HistoryRecord,
+  HistorySummaryItem,
+  HistoryDetailResponse,
 } from '@/types';
 
 // --- State machine ---
@@ -77,6 +82,10 @@ export default function HomePage() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
 
+  // Task 7.1: Auth and cloud history hooks
+  const { user, loading: authLoading } = useAuth();
+  const cloudHistory = useCloudHistory(!!user);
+
   useEffect(() => {
     setHistory(readHistory());
   }, []);
@@ -89,6 +98,45 @@ export default function HomePage() {
     state.content.trim().length > 0 &&
     !contentOverLimit &&
     state.selectedPlatforms.length > 0;
+
+  // Task 7.3: Fall back to local history when cloud API fails
+  const shouldUseCloudHistory = !!user && !cloudHistory.error;
+
+  // Task 7.4: Fetch full record from cloud history detail API
+  async function handleCloudHistoryClick(item: HistorySummaryItem) {
+    try {
+      const res = await fetch(`/api/history/${item.id}`);
+      const json = (await res.json()) as ApiSuccess<HistoryDetailResponse> | ApiError;
+
+      if (!json.success) {
+        dispatch({
+          type: 'GENERATE_ERROR',
+          payload: (json as ApiError).error.message,
+        });
+        return;
+      }
+
+      const detail = (json as ApiSuccess<HistoryDetailResponse>).data;
+      const results = detail.resultJson as Partial<Record<PlatformCode, GeneratePlatformOutput>>;
+
+      dispatch({
+        type: 'RESTORE',
+        payload: {
+          generationId: detail.id,
+          results,
+          errors: {},
+          durationMs: detail.durationMs,
+          model: detail.modelName ?? '',
+          partialFailure: false,
+        },
+      });
+    } catch {
+      dispatch({
+        type: 'GENERATE_ERROR',
+        payload: '获取历史记录详情失败，请稍后重试',
+      });
+    }
+  }
 
   async function handleGenerate() {
     if (!canGenerate) return;
@@ -118,6 +166,7 @@ export default function HomePage() {
       trackGenerateSuccess(state.selectedPlatforms, data.durationMs, data.model);
       dispatch({ type: 'GENERATE_SUCCESS', payload: data });
 
+      // Always update local history (for anonymous users)
       const record: HistoryRecord = {
         id: data.generationId,
         platforms: state.selectedPlatforms,
@@ -127,6 +176,11 @@ export default function HomePage() {
       };
       prependHistory(record);
       setHistory(readHistory());
+
+      // Task 7.5: Refresh cloud history for logged-in users
+      if (user) {
+        cloudHistory.refresh();
+      }
     } catch {
       const msg = '网络错误，请稍后重试';
       trackGenerateFail(msg, state.selectedPlatforms);
@@ -206,39 +260,77 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* History */}
-        {history.length > 0 && (
-          <section className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-zinc-500">历史记录</h2>
-            <ul className="flex flex-col gap-2">
-              {history.map((record) => (
-                <li key={record.id}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      dispatch({
-                        type: 'RESTORE',
-                        payload: {
-                          generationId: record.id,
-                          results: record.results,
-                          errors: {},
-                          durationMs: 0,
-                          model: '',
-                          partialFailure: false,
-                        },
-                      })
-                    }
-                    className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-left text-sm hover:border-zinc-400"
-                  >
-                    <span className="block truncate text-zinc-700">{record.inputSnippet}</span>
-                    <span className="text-xs text-zinc-400">
-                      {record.platforms.join(', ')} · {new Date(record.createdAt).toLocaleString('zh-CN')}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+        {/* History — Task 7.1: Don't render while auth is loading */}
+        {!authLoading && (
+          <>
+            {/* Task 7.2: Cloud history loading indicator */}
+            {shouldUseCloudHistory && cloudHistory.loading && (
+              <p className="text-sm text-zinc-400">加载中...</p>
+            )}
+
+            {/* Cloud history for logged-in users */}
+            {shouldUseCloudHistory && !cloudHistory.loading && cloudHistory.items.length > 0 && (
+              <section className="flex flex-col gap-3">
+                <h2 className="text-sm font-semibold text-zinc-500">历史记录</h2>
+                <ul className="flex flex-col gap-2">
+                  {cloudHistory.items.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleCloudHistoryClick(item)}
+                        className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-left text-sm hover:border-zinc-400"
+                      >
+                        {/* Task 7.6: Display inputSnippet with ellipsis */}
+                        <span className="block truncate text-zinc-700">
+                          {item.inputSnippet.length === 100
+                            ? `${item.inputSnippet}…`
+                            : item.inputSnippet || '无内容预览'}
+                        </span>
+                        <span className="text-xs text-zinc-400">
+                          {item.platforms.join(', ')} · {new Date(item.createdAt).toLocaleString('zh-CN')}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {/* Local history for anonymous users or cloud API failure fallback */}
+            {!shouldUseCloudHistory && history.length > 0 && (
+              <section className="flex flex-col gap-3">
+                <h2 className="text-sm font-semibold text-zinc-500">历史记录</h2>
+                <ul className="flex flex-col gap-2">
+                  {history.map((record) => (
+                    <li key={record.id}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          dispatch({
+                            type: 'RESTORE',
+                            payload: {
+                              generationId: record.id,
+                              results: record.results,
+                              errors: {},
+                              durationMs: 0,
+                              model: '',
+                              partialFailure: false,
+                            },
+                          })
+                        }
+                        className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-left text-sm hover:border-zinc-400"
+                      >
+                        <span className="block truncate text-zinc-700">{record.inputSnippet}</span>
+                        <span className="text-xs text-zinc-400">
+                          {record.platforms.join(', ')} · {new Date(record.createdAt).toLocaleString('zh-CN')}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </>
         )}
       </div>
     </main>

@@ -48,6 +48,7 @@ export default function PlatformSelector({
             <button
               key={platform}
               type="button"
+              data-platform={platform}
               onClick={() => toggle(platform)}
               disabled={disabled}
               aria-pressed={isSelected}

@@ -34,6 +34,14 @@ export default function HistoryItem({ item }: Props) {
         </span>
       </div>
 
+      <p className="truncate text-sm text-zinc-700">
+        {item.inputSnippet.length === 0
+          ? <span className="text-zinc-400">无内容预览</span>
+          : item.inputSnippet.length === 100
+            ? `${item.inputSnippet}…`
+            : item.inputSnippet}
+      </p>
+
       <div className="flex flex-wrap gap-1">
         {item.platforms.map((p) => (
           <span key={p} className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">

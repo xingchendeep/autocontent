@@ -1,0 +1,29 @@
+{
+  "cookies": [
+    {
+      "name": "ph_phc_IzlCCIN3xx0GEA4Y8vjWP6tz4A2CK1zZreMyGJ0bs3f_posthog",
+      "value": "%7B%22%24device_id%22%3A%22019cebd8-c6db-74d5-8232-dc48c9ca9dbb%22%2C%22distinct_id%22%3A%22019cebd8-c6db-74d5-8232-dc48c9ca9dbb%22%2C%22%24user_state%22%3A%22anonymous%22%7D",
+      "domain": "localhost",
+      "path": "/",
+      "expires": 1805019380,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "http://localhost:3000",
+      "localStorage": [
+        {
+          "name": "ph_phc_IzlCCIN3xx0GEA4Y8vjWP6tz4A2CK1zZreMyGJ0bs3f_posthog",
+          "value": "{\"$device_id\":\"019cebd8-c6db-74d5-8232-dc48c9ca9dbb\",\"distinct_id\":\"019cebd8-c6db-74d5-8232-dc48c9ca9dbb\",\"$user_state\":\"anonymous\",\"$initialization_time\":\"2026-03-14T10:16:18.621Z\",\"$configured_session_timeout_ms\":1800000,\"$error_tracking_suppression_rules\":[],\"$session_recording_remote_config\":{\"cache_timestamp\":1773483380204,\"enabled\":false,\"networkPayloadCapture\":{\"capturePerformance\":{\"network_timing\":true,\"web_vitals\":false,\"web_vitals_allowed_metrics\":null}},\"canvasRecording\":{},\"sampleRate\":null,\"minimumDurationMilliseconds\":null},\"$autocapture_disabled_server_side\":false,\"$product_tours_enabled_server_side\":false,\"$heatmaps_enabled_server_side\":false,\"$web_vitals_enabled_server_side\":false,\"$web_vitals_allowed_metrics\":null,\"$exception_capture_enabled_server_side\":false,\"$dead_clicks_enabled_server_side\":false}"
+        },
+        {
+          "name": "sb-127-auth-token",
+          "value": "{\"access_token\":\"eyJhbGciOiJFUzI1NiIsImtpZCI6ImI4MTI2OWYxLTIxZDgtNGYyZS1iNzE5LWMyMjQwYTg0MGQ5MCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjU0MzIxL2F1dGgvdjEiLCJzdWIiOiJjMGZhODE4Zi05NTQ4LTQ3ZTEtOGZmMy03MjhhYjc1NmZjZjIiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzczNDg2OTc4LCJpYXQiOjE3NzM0ODMzNzgsImVtYWlsIjoidGVzdEBleGFtcGxlLmNvbSIsInBob25lIjoiIiwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sInVzZXJfbWV0YWRhdGEiOnsiZW1haWwiOiJ0ZXN0QGV4YW1wbGUuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiYzBmYTgxOGYtOTU0OC00N2UxLThmZjMtNzI4YWI3NTZmY2YyIn0sInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMSIsImFtciI6W3sibWV0aG9kIjoicGFzc3dvcmQiLCJ0aW1lc3RhbXAiOjE3NzM0ODMzNzh9XSwic2Vzc2lvbl9pZCI6IjA0NTY4ZDk1LTUwYjUtNDE0MC1hZTExLTUxZTcwZjAxYjFjYSIsImlzX2Fub255bW91cyI6ZmFsc2V9.FpBhnJr3AmhdJD53YKZXiQ20Sbqvij-57kbkh_63c1e0VPJCP__Ww4zF2Z82vZ9skFUqppl2TUVBaL4TG_s3Mw\",\"refresh_token\":\"djgxufr3xap3\",\"token_type\":\"bearer\",\"expires_in\":3600}"
+        }
+      ]
+    }
+  ]
+}

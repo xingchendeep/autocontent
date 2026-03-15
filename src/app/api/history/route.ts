@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { createSupabaseServerClient } from '@/lib/auth/server';
 import { generateRequestId, createSuccess, createError, ERROR_CODES, ERROR_STATUS } from '@/lib/errors';
+import { createSnippet } from '@/lib/snippets';
 import type { HistorySummaryItem } from '@/types';
 
 const querySchema = z.object({
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   let query = db
     .from('generations')
     .select(
-      'id, input_source, platforms, platform_count, status, model_name, duration_ms, created_at',
+      'id, input_source, input_content, platforms, platform_count, status, model_name, duration_ms, created_at',
       { count: 'exact' },
     )
     .order('created_at', { ascending: false })
@@ -65,6 +66,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const items: HistorySummaryItem[] = (data ?? []).map((row) => ({
     id: row.id as string,
     inputSource: row.input_source as 'manual' | 'extract',
+    inputSnippet: createSnippet(row.input_content as string),
     platforms: row.platforms as string[],
     platformCount: row.platform_count as number,
     status: row.status as 'success' | 'partial' | 'failed',

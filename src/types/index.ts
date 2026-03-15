@@ -99,12 +99,50 @@ export interface PlanCapability {
 export interface HistorySummaryItem {
   id: string;
   inputSource: 'manual' | 'extract';
+  inputSnippet: string;
   platforms: string[];
   platformCount: number;
   status: 'success' | 'partial' | 'failed';
   modelName: string | null;
   durationMs: number;
   createdAt: string; // ISO 8601
+}
+
+export interface HistoryDetailResponse {
+  id: string;
+  inputSource: 'manual' | 'extract';
+  inputContent: string;
+  platforms: string[];
+  platformCount: number;
+  resultJson: Record<string, unknown>;
+  status: 'success' | 'partial' | 'failed';
+  modelName: string | null;
+  durationMs: number;
+  createdAt: string; // ISO 8601
+}
+
+// --- Billing / payments ---
+
+export interface CheckoutResponseData {
+  checkoutUrl: string;
+  provider: 'lemonsqueezy';
+}
+
+export type SubscriptionStatus =
+  | 'active'
+  | 'cancelled'
+  | 'expired'
+  | 'past_due'
+  | 'trialing'
+  | 'paused';
+
+export interface PricingPlan {
+  code: string;
+  displayName: string;
+  priceMonthly: number;          // in cents (e.g. 999 = $9.99)
+  monthlyGenerationLimit: number | null;
+  platformLimit: number | null;
+  speedTier: 'standard' | 'fast' | 'priority' | 'dedicated';
 }
 
 // --- Usage data ---

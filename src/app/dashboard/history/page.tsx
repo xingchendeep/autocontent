@@ -1,7 +1,9 @@
-import { headers } from 'next/headers';
 import Link from 'next/link';
 import HistoryItem from '@/components/dashboard/HistoryItem';
-import type { ApiSuccess, ApiError, HistorySummaryItem } from '@/types';
+import { getSession } from '@/lib/auth';
+import { createSupabaseServerClient } from '@/lib/auth/server';
+import { createSnippet } from '@/lib/snippets';
+import type { HistorySummaryItem } from '@/types';
 
 interface Pagination {
   page: number;
@@ -18,17 +20,45 @@ interface HistoryData {
 const LIMIT = 20;
 
 async function fetchHistory(page: number): Promise<{ data: HistoryData | null; error: string | null }> {
-  const headersList = await headers();
-  const host = headersList.get('host') ?? 'localhost:3000';
-  const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+  const session = await getSession();
+  if (!session) {
+    return { data: null, error: 'Authentication required' };
+  }
 
-  const res = await fetch(
-    `${protocol}://${host}/api/history?page=${page}&limit=${LIMIT}`,
-    { cache: 'no-store' },
-  );
-  const json = (await res.json()) as ApiSuccess<HistoryData> | ApiError;
-  if (json.success) return { data: json.data, error: null };
-  return { data: null, error: json.error.message };
+  const from = (page - 1) * LIMIT;
+  const to = page * LIMIT - 1;
+
+  const db = await createSupabaseServerClient();
+  const { data, count, error } = await db
+    .from('generations')
+    .select(
+      'id, input_source, input_content, platforms, platform_count, status, model_name, duration_ms, created_at',
+      { count: 'exact' },
+    )
+    .order('created_at', { ascending: false })
+    .range(from, to);
+
+  if (error) {
+    return { data: null, error: 'Failed to fetch history' };
+  }
+
+  const total = count ?? 0;
+  const items: HistorySummaryItem[] = (data ?? []).map((row) => ({
+    id: row.id as string,
+    inputSource: row.input_source as 'manual' | 'extract',
+    inputSnippet: createSnippet(row.input_content as string),
+    platforms: row.platforms as string[],
+    platformCount: row.platform_count as number,
+    status: row.status as 'success' | 'partial' | 'failed',
+    modelName: row.model_name as string | null,
+    durationMs: row.duration_ms as number,
+    createdAt: row.created_at as string,
+  }));
+
+  return {
+    data: { items, pagination: { page, limit: LIMIT, total, hasMore: page * LIMIT < total } },
+    error: null,
+  };
 }
 
 interface Props {
