@@ -3,6 +3,7 @@
 import { useReducer, useState, useEffect } from 'react';
 import Hero from '@/components/layout/Hero';
 import ContentInput from '@/components/generate/ContentInput';
+import VideoUrlInput from '@/components/generate/VideoUrlInput';
 import PlatformSelector from '@/components/generate/PlatformSelector';
 import GenerateButton from '@/components/generate/GenerateButton';
 import ResultCard from '@/components/generate/ResultCard';
@@ -81,6 +82,7 @@ function reducer(state: PageState, action: Action): PageState {
 export default function HomePage() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [history, setHistory] = useState<HistoryRecord[]>(() => readHistory());
+  const [inputMode, setInputMode] = useState<'text' | 'url'>('text');
 
   // Task 7.1: Auth and cloud history hooks
   const { user, loading: authLoading } = useAuth();
@@ -196,12 +198,66 @@ export default function HomePage() {
       <Hero />
 
       <div className="flex flex-col gap-6">
-        {/* Content input */}
-        <ContentInput
-          value={state.content}
-          onChange={(v) => dispatch({ type: 'SET_CONTENT', payload: v })}
-          disabled={isLoading}
-        />
+        {/* Input mode tabs + content */}
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-1 rounded-lg bg-zinc-100 p-1 w-fit">
+            <button
+              type="button"
+              onClick={() => setInputMode('text')}
+              className={[
+                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                inputMode === 'text'
+                  ? 'bg-white text-zinc-900 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-700',
+              ].join(' ')}
+            >
+              📝 粘贴文本
+            </button>
+            <button
+              type="button"
+              onClick={() => setInputMode('url')}
+              className={[
+                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                inputMode === 'url'
+                  ? 'bg-white text-zinc-900 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-700',
+              ].join(' ')}
+            >
+              🔗 视频链接
+            </button>
+          </div>
+
+          {inputMode === 'text' ? (
+            <ContentInput
+              value={state.content}
+              onChange={(v) => dispatch({ type: 'SET_CONTENT', payload: v })}
+              disabled={isLoading}
+            />
+          ) : (
+            <>
+              <VideoUrlInput
+                onExtracted={(text) => {
+                  dispatch({ type: 'SET_CONTENT', payload: text });
+                  setInputMode('text');
+                }}
+                disabled={isLoading || (!user && !authLoading)}
+              />
+              {!user && !authLoading && (
+                <p className="text-xs text-amber-600 px-1">
+                  ⚠️ 视频链接提取需要登录后使用
+                </p>
+              )}
+            </>
+          )}
+
+          {/* Show extracted content preview when in URL mode and content exists */}
+          {inputMode === 'url' && state.content.trim().length > 0 && (
+            <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+              <p className="text-xs text-green-700 mb-1">已提取的内容：</p>
+              <p className="text-sm text-zinc-700 line-clamp-3">{state.content}</p>
+            </div>
+          )}
+        </div>
 
         {/* Platform selector */}
         <PlatformSelector
