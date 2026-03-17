@@ -182,3 +182,68 @@ export interface SavedScriptDetail {
   createdAt: string;
   updatedAt: string;
 }
+
+// --- v2: Template types ---
+
+export type ToneValue = 'professional' | 'casual' | 'humorous' | 'authoritative' | 'empathetic';
+export type LengthValue = 'short' | 'medium' | 'long';
+
+export interface UserTemplate {
+  id: string;
+  userId: string;
+  name: string;
+  tone: ToneValue;
+  length: LengthValue;
+  customInstructions?: string;
+  platformOverrides: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// --- v2: Batch job types ---
+
+export type BatchJobStatusValue = 'pending' | 'processing' | 'completed' | 'failed' | 'partial';
+
+export interface BatchJobStatus {
+  jobId: string;
+  status: BatchJobStatusValue;
+  itemCount: number;
+  completedCount: number;
+  failedCount: number;
+  createdAt: string;
+  updatedAt: string;
+  items?: BatchJobItem[];
+}
+
+export interface BatchJobItem {
+  itemId: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  results: Partial<Record<PlatformCode, GeneratePlatformOutput>> | null;
+  errorMessage?: string;
+}
+
+// --- v2: Team types ---
+
+export type TeamRole = 'owner' | 'admin' | 'member';
+
+export interface TeamSummary {
+  id: string;
+  name: string;
+  role: TeamRole;
+  memberCount: number;
+}
+
+export interface TeamMember {
+  userId: string;
+  email: string;
+  role: TeamRole;
+  joinedAt: string;
+}
+
+export interface TeamInvitation {
+  id: string;
+  teamId: string;
+  teamName: string;
+  role: TeamRole;
+  expired: boolean;
+}
