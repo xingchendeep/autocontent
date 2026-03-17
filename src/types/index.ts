@@ -161,3 +161,24 @@ export interface UsageData {
     speedTier: string;
   };
 }
+
+// --- Saved scripts ---
+
+export interface SavedScriptItem {
+  id: string;
+  title: string;
+  contentSnippet: string;
+  source: 'manual' | 'extract';
+  sourceUrl: string | null;
+  createdAt: string;
+}
+
+export interface SavedScriptDetail {
+  id: string;
+  title: string;
+  content: string;
+  source: 'manual' | 'extract';
+  sourceUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

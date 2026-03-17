@@ -15,7 +15,8 @@ export default async function DashboardLayout({
           <nav className="flex items-center gap-4">
             <span className="text-sm font-semibold text-zinc-900">AutoContent Pro</span>
             <Link href="/dashboard" className="text-sm text-zinc-500 hover:text-zinc-900">控制台</Link>
-            <Link href="/dashboard/history" className="text-sm text-zinc-500 hover:text-zinc-900">历史记录</Link>
+            <Link href="/dashboard/history" className="text-sm text-zinc-500 hover:text-zinc-900">生成记录</Link>
+            <Link href="/dashboard/scripts" className="text-sm text-zinc-500 hover:text-zinc-900">脚本库</Link>
             <Link href="/dashboard/api-keys" className="text-sm text-zinc-500 hover:text-zinc-900">API Keys</Link>
             <Link href="/dashboard/subscription" className="text-sm text-zinc-500 hover:text-zinc-900">订阅</Link>
           </nav>

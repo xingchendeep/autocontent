@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 
 type ExtractStatus = 'idle' | 'extracting' | 'polling' | 'success' | 'error';
 
@@ -16,6 +16,21 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
   const [url, setUrl] = useState('');
   const [status, setStatus] = useState<ExtractStatus>('idle');
   const [message, setMessage] = useState('');
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const isWorking = status === 'extracting' || status === 'polling';
+
+  useEffect(() => {
+    if (isWorking) {
+      setElapsed(0);
+      timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [isWorking]);
 
   const isValidUrl = useCallback((v: string) => {
     try {
@@ -86,8 +101,6 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
     }
   }
 
-  const isWorking = status === 'extracting' || status === 'polling';
-
   return (
     <div className="flex flex-col gap-2">
       <div className="flex gap-2">
@@ -118,12 +131,26 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
               : 'bg-blue-600 text-white hover:bg-blue-700',
           ].join(' ')}
         >
-          {isWorking ? '提取中...' : '提取脚本'}
+          {isWorking ? `提取中… ${elapsed}s` : '提取脚本'}
         </button>
       </div>
 
-      {/* Status message */}
-      {message && (
+      {/* Status message + progress */}
+      {isWorking && (
+        <div className="px-1">
+          <div className="h-1.5 w-full rounded-full bg-zinc-200 overflow-hidden mb-1">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all duration-1000 ease-linear"
+              style={{ width: `${Math.min((elapsed / 120) * 100, 95)}%` }}
+            />
+          </div>
+          <p className="text-xs text-zinc-500">
+            <span className="inline-block mr-1 animate-spin">⏳</span>
+            {message} ({elapsed}s)
+          </p>
+        </div>
+      )}
+      {!isWorking && message && (
         <p
           className={[
             'text-xs px-1',
@@ -131,9 +158,6 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
           ].join(' ')}
           role={status === 'error' ? 'alert' : undefined}
         >
-          {isWorking && (
-            <span className="inline-block mr-1 animate-spin">⏳</span>
-          )}
           {message}
         </p>
       )}

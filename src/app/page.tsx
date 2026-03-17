@@ -1,15 +1,18 @@
 'use client';
 
 import { useReducer, useState, useEffect } from 'react';
+import Link from 'next/link';
 import Hero from '@/components/layout/Hero';
 import ContentInput from '@/components/generate/ContentInput';
 import VideoUrlInput from '@/components/generate/VideoUrlInput';
+import FileUploadInput from '@/components/generate/FileUploadInput';
 import PlatformSelector from '@/components/generate/PlatformSelector';
 import GenerateButton from '@/components/generate/GenerateButton';
 import ResultCard from '@/components/generate/ResultCard';
 import { readHistory, prependHistory } from '@/lib/localHistory';
 import { useAuth } from '@/hooks/useAuth';
 import { useCloudHistory } from '@/hooks/useCloudHistory';
+import { useSavedScripts } from '@/hooks/useSavedScripts';
 import {
   trackPageView,
   trackGenerateClick,
@@ -34,6 +37,8 @@ type UIState = 'idle' | 'loading' | 'success' | 'error';
 interface PageState {
   uiState: UIState;
   content: string;
+  inputSource: 'manual' | 'extract';
+  extractedUrl: string | null;
   selectedPlatforms: PlatformCode[];
   response: GenerateResponse | null;
   errorMessage: string | null;
@@ -41,6 +46,7 @@ interface PageState {
 
 type Action =
   | { type: 'SET_CONTENT'; payload: string }
+  | { type: 'SET_EXTRACTED'; payload: { content: string; url?: string } }
   | { type: 'SET_PLATFORMS'; payload: PlatformCode[] }
   | { type: 'GENERATE_START' }
   | { type: 'GENERATE_SUCCESS'; payload: GenerateResponse }
@@ -51,6 +57,8 @@ type Action =
 const initialState: PageState = {
   uiState: 'idle',
   content: '',
+  inputSource: 'manual',
+  extractedUrl: null,
   selectedPlatforms: [],
   response: null,
   errorMessage: null,
@@ -59,7 +67,9 @@ const initialState: PageState = {
 function reducer(state: PageState, action: Action): PageState {
   switch (action.type) {
     case 'SET_CONTENT':
-      return { ...state, content: action.payload };
+      return { ...state, content: action.payload, inputSource: 'manual', extractedUrl: null };
+    case 'SET_EXTRACTED':
+      return { ...state, content: action.payload.content, inputSource: 'extract', extractedUrl: action.payload.url ?? null };
     case 'SET_PLATFORMS':
       return { ...state, selectedPlatforms: action.payload };
     case 'GENERATE_START':
@@ -82,11 +92,12 @@ function reducer(state: PageState, action: Action): PageState {
 export default function HomePage() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [history, setHistory] = useState<HistoryRecord[]>(() => readHistory());
-  const [inputMode, setInputMode] = useState<'text' | 'url'>('text');
+  const [inputMode, setInputMode] = useState<'text' | 'url' | 'upload'>('text');
 
   // Task 7.1: Auth and cloud history hooks
   const { user, loading: authLoading } = useAuth();
   const cloudHistory = useCloudHistory(!!user);
+  const savedScripts = useSavedScripts(!!user);
 
   useEffect(() => { trackPageView(); }, []);
 
@@ -131,7 +142,7 @@ export default function HomePage() {
     } catch {
       dispatch({
         type: 'GENERATE_ERROR',
-        payload: '获取历史记录详情失败，请稍后重试',
+        payload: '获取生成记录详情失败，请稍后重试',
       });
     }
   }
@@ -178,6 +189,7 @@ export default function HomePage() {
       // Task 7.5: Refresh cloud history for logged-in users
       if (user) {
         cloudHistory.refresh();
+        savedScripts.refresh();
       }
     } catch {
       const msg = '网络错误，请稍后重试';
@@ -225,19 +237,33 @@ export default function HomePage() {
             >
               🔗 视频链接
             </button>
+            <button
+              type="button"
+              onClick={() => setInputMode('upload')}
+              className={[
+                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                inputMode === 'upload'
+                  ? 'bg-white text-zinc-900 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-700',
+              ].join(' ')}
+            >
+              📁 上传文件
+            </button>
           </div>
 
-          {inputMode === 'text' ? (
+          {inputMode === 'text' && (
             <ContentInput
               value={state.content}
               onChange={(v) => dispatch({ type: 'SET_CONTENT', payload: v })}
               disabled={isLoading}
             />
-          ) : (
+          )}
+
+          {inputMode === 'url' && (
             <>
               <VideoUrlInput
                 onExtracted={(text) => {
-                  dispatch({ type: 'SET_CONTENT', payload: text });
+                  dispatch({ type: 'SET_EXTRACTED', payload: { content: text } });
                   setInputMode('text');
                 }}
                 disabled={isLoading || (!user && !authLoading)}
@@ -250,8 +276,25 @@ export default function HomePage() {
             </>
           )}
 
-          {/* Show extracted content preview when in URL mode and content exists */}
-          {inputMode === 'url' && state.content.trim().length > 0 && (
+          {inputMode === 'upload' && (
+            <>
+              <FileUploadInput
+                onExtracted={(text) => {
+                  dispatch({ type: 'SET_EXTRACTED', payload: { content: text } });
+                  setInputMode('text');
+                }}
+                disabled={isLoading || (!user && !authLoading)}
+              />
+              {!user && !authLoading && (
+                <p className="text-xs text-amber-600 px-1">
+                  ⚠️ 文件上传提取需要登录后使用
+                </p>
+              )}
+            </>
+          )}
+
+          {/* Show extracted content preview when in URL/upload mode and content exists */}
+          {inputMode !== 'text' && state.content.trim().length > 0 && (
             <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2">
               <p className="text-xs text-green-700 mb-1">已提取的内容：</p>
               <p className="text-sm text-zinc-700 line-clamp-3">{state.content}</p>
@@ -323,9 +366,9 @@ export default function HomePage() {
             {/* Cloud history for logged-in users */}
             {shouldUseCloudHistory && !cloudHistory.loading && cloudHistory.items.length > 0 && (
               <section className="flex flex-col gap-3">
-                <h2 className="text-sm font-semibold text-zinc-500">历史记录</h2>
+                <h2 className="text-sm font-semibold text-zinc-500">生成记录</h2>
                 <ul className="flex flex-col gap-2">
-                  {cloudHistory.items.map((item) => (
+                  {cloudHistory.items.slice(0, 3).map((item) => (
                     <li key={item.id}>
                       <button
                         type="button"
@@ -345,15 +388,18 @@ export default function HomePage() {
                     </li>
                   ))}
                 </ul>
+                <Link href="/dashboard/history" className="text-sm text-zinc-500 hover:text-zinc-900 hover:underline text-center">
+                  查看更多 →
+                </Link>
               </section>
             )}
 
             {/* Local history for anonymous users or cloud API failure fallback */}
             {!shouldUseCloudHistory && history.length > 0 && (
               <section className="flex flex-col gap-3">
-                <h2 className="text-sm font-semibold text-zinc-500">历史记录</h2>
+                <h2 className="text-sm font-semibold text-zinc-500">生成记录</h2>
                 <ul className="flex flex-col gap-2">
-                  {history.map((record) => (
+                  {history.slice(0, 3).map((record) => (
                     <li key={record.id}>
                       <button
                         type="button"
@@ -380,6 +426,9 @@ export default function HomePage() {
                     </li>
                   ))}
                 </ul>
+                <Link href="/dashboard/history" className="text-sm text-zinc-500 hover:text-zinc-900 hover:underline text-center">
+                  查看更多 →
+                </Link>
               </section>
             )}
           </>

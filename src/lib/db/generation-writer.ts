@@ -2,6 +2,7 @@ import type { PlatformCode } from '@/types';
 import type { GenerateAllResult } from '@/lib/ai/service';
 import { createServiceRoleClient } from '@/lib/db/client';
 import { upsertUsageStats } from '@/lib/db/usage-stats';
+import { autoSaveScript } from '@/lib/scripts';
 import { logger } from '@/lib/logger';
 
 export interface WriteGenerationParams {
@@ -88,6 +89,16 @@ export function writeGeneration(params: WriteGenerationParams): void {
       }
 
       await upsertUsageStats(userId, requestId);
+
+      // Auto-save input script to saved_scripts (only on success/partial)
+      if (status !== 'failed') {
+        await autoSaveScript({
+          userId,
+          content,
+          source,
+          requestId,
+        });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error('writeGeneration: unexpected error', { requestId, userId, errorMessage: msg });

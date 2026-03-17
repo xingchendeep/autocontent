@@ -10,7 +10,7 @@ export default function DashboardPage() {
           href="/dashboard/history"
           className="text-sm text-zinc-500 hover:text-zinc-900 hover:underline"
         >
-          查看历史记录 →
+          查看生成记录 →
         </Link>
       </div>
 

@@ -36,7 +36,7 @@ export default function Navbar() {
                 控制台
               </Link>
               <Link href="/dashboard/history" className="text-zinc-600 hover:text-zinc-900">
-                历史记录
+                生成记录
               </Link>
               <form action="/api/signout" method="POST" className="inline">
                 <button type="submit" className="text-zinc-500 hover:text-zinc-900">

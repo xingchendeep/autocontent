@@ -79,7 +79,7 @@ export default async function HistoryPage({ searchParams }: Props) {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
-      <h1 className="mb-6 text-lg font-semibold text-zinc-900">生成历史</h1>
+      <h1 className="mb-6 text-lg font-semibold text-zinc-900">生成记录</h1>
 
       {items.length === 0 ? (
         <div className="rounded-lg border border-zinc-200 bg-white px-6 py-10 text-center">
