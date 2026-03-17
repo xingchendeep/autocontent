@@ -76,7 +76,7 @@ export async function GET(_req: NextRequest): Promise<NextResponse> {
 
   const teams = await listTeamsForUser(session.id);
 
-  return NextResponse.json(createSuccess(teams, requestId), {
+  return NextResponse.json(createSuccess({ items: teams }, requestId), {
     status: 200,
     headers: { 'x-request-id': requestId },
   });

@@ -75,7 +75,7 @@ export async function GET(_req: NextRequest): Promise<NextResponse> {
 
   const keys = await listApiKeys(session.id);
 
-  return NextResponse.json(createSuccess(keys, requestId), {
+  return NextResponse.json(createSuccess({ items: keys }, requestId), {
     status: 200,
     headers: { 'x-request-id': requestId },
   });

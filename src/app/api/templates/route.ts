@@ -79,7 +79,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const teamId = req.nextUrl.searchParams.get('teamId') ?? undefined;
   const templates = await listTemplates(session.id, teamId);
 
-  return NextResponse.json(createSuccess(templates, requestId), {
+  return NextResponse.json(createSuccess({ items: templates }, requestId), {
     status: 200,
     headers: { 'x-request-id': requestId },
   });
