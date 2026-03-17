@@ -72,18 +72,33 @@ export async function setUserPlan(userId: string, planCode: string): Promise<voi
     .single()
   if (!plan) return
 
-  await db.from('subscriptions').upsert(
-    {
-      user_id: userId,
+  const providerSubId = `test_sub_${userId}`
+
+  // Check if subscription already exists (partial unique index prevents PostgREST upsert)
+  const { data: existing } = await db
+    .from('subscriptions')
+    .select('id')
+    .eq('provider_subscription_id', providerSubId)
+    .maybeSingle()
+
+  if (existing) {
+    await db.from('subscriptions').update({
       plan_id: plan.id,
-      provider: 'lemonsqueezy',
-      provider_subscription_id: `test_sub_${userId}`,
       status: 'active',
       current_period_start: new Date().toISOString(),
       current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    },
-    { onConflict: 'provider_subscription_id' },
-  )
+    }).eq('id', existing.id)
+  } else {
+    await db.from('subscriptions').insert({
+      user_id: userId,
+      plan_id: plan.id,
+      provider: 'lemonsqueezy',
+      provider_subscription_id: providerSubId,
+      status: 'active',
+      current_period_start: new Date().toISOString(),
+      current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+  }
 }
 
 /**

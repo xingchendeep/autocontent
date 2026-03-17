@@ -8,6 +8,14 @@ const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations')
 describe('Unique constraints', () => {
   it('webhook_events rejects duplicate (provider, event_id)', async () => {
     const db = serviceClient()
+
+    // Cleanup leftover data from previous runs
+    await db
+      .from('webhook_events')
+      .delete()
+      .eq('provider', 'test-provider')
+      .eq('event_id', 'unique-constraint-test-001')
+
     // Insert first row
     const { error: e1 } = await db.from('webhook_events').insert({
       provider: 'test-provider',

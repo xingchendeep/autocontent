@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { createSupabaseServerClient } from '@/lib/auth/server';
+import { createServiceRoleClient } from '@/lib/db/client';
 import { getPlanCapability } from '@/lib/billing/plan-capability';
 import { generateRequestId, createSuccess, createError, ERROR_CODES, ERROR_STATUS } from '@/lib/errors';
 import type { UsageData } from '@/types';
@@ -19,8 +19,8 @@ export async function GET(): Promise<NextResponse> {
   const { id: userId } = session;
   const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
 
-  // Parallel: fetch usage_stats + plan capability
-  const db = await createSupabaseServerClient();
+  // Parallel: fetch usage_stats + plan capability (both use service role to bypass RLS)
+  const db = createServiceRoleClient();
   const [statsResult, capabilityResult] = await Promise.all([
     db.from('usage_stats').select('*').eq('user_id', userId).maybeSingle(),
     getPlanCapability(userId).then(

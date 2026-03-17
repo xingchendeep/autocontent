@@ -124,8 +124,28 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         .eq('code', 'free')
         .single();
 
-      const { error: upsertErr } = await db.from('subscriptions').upsert(
-        {
+      // Check if subscription already exists (partial unique index on provider_subscription_id
+      // prevents using PostgREST upsert with onConflict)
+      const { data: existingSub } = await db
+        .from('subscriptions')
+        .select('id')
+        .eq('provider_subscription_id', providerSubscriptionId)
+        .maybeSingle();
+
+      let subError: { code: string; message: string } | null = null;
+      if (existingSub) {
+        const { error } = await db
+          .from('subscriptions')
+          .update({
+            plan_id: freePlan?.id,
+            status: 'active',
+            current_period_start: attrs.created_at ?? new Date().toISOString(),
+            current_period_end: attrs.renews_at ?? attrs.ends_at ?? null,
+          })
+          .eq('id', existingSub.id);
+        subError = error;
+      } else {
+        const { error } = await db.from('subscriptions').insert({
           user_id: userId,
           plan_id: freePlan?.id,
           provider: 'lemonsqueezy',
@@ -133,11 +153,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           status: 'active',
           current_period_start: attrs.created_at ?? new Date().toISOString(),
           current_period_end: attrs.renews_at ?? attrs.ends_at ?? null,
-        },
-        { onConflict: 'provider_subscription_id' },
-      );
+        });
+        subError = error;
+      }
 
-      if (upsertErr) {
+      if (subError) {
         return NextResponse.json(
           createError(ERROR_CODES.INTERNAL_ERROR, 'Failed to create subscription', requestId),
           { status: ERROR_STATUS.INTERNAL_ERROR, headers: { 'x-request-id': requestId } },

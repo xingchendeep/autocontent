@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
-import { createSupabaseServerClient } from '@/lib/auth/server';
+import { createServiceRoleClient } from '@/lib/db/client';
 import { generateRequestId, createSuccess, createError, ERROR_CODES, ERROR_STATUS } from '@/lib/errors';
 import { getMemberRole } from '@/lib/teams';
 import { createSnippet } from '@/lib/snippets';
@@ -54,13 +54,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const from = (page - 1) * limit;
   const to = page * limit - 1;
 
-  const db = await createSupabaseServerClient();
+  const db = createServiceRoleClient();
   let query = db
     .from('generations')
     .select(
       'id, input_source, input_content, platforms, platform_count, status, model_name, duration_ms, created_at',
       { count: 'exact' },
     )
+    .eq('user_id', session.id)
     .order('created_at', { ascending: false })
     .range(from, to);
 
