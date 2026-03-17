@@ -121,7 +121,7 @@ Edge Middleware route protection, and automatic profile creation using Supabase 
   - Call `signOut()` from `src/lib/auth/index.ts`
   - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 7. Checkpoint — Ensure all tests pass
+- [x] 7. Checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 8. Implement `LoginForm` client component (`src/components/auth/LoginForm.tsx`)
