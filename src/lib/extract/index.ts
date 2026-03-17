@@ -51,11 +51,18 @@ export async function extractVideoScript(
     logger.info('extract: bilibili subtitle API failed, falling back to ASR', { videoUrl });
   }
 
-  // ASR
+  // ASR — 如果没有 audioUrl，尝试服务端自动解析视频直链
   if (!audioUrl) {
-    throw new Error(
-      '当前平台暂不支持自动提取音频，请提供音频直链或使用 B站视频（支持字幕提取）',
-    );
+    logger.info('extract: no audioUrl provided, trying server-side video URL resolution', { platform });
+    const resolvedUrl = await resolveVideoUrl(videoUrl, platform, awemeId);
+    if (resolvedUrl) {
+      audioUrl = resolvedUrl;
+      logger.info('extract: resolved video URL server-side', { audioUrl: audioUrl.slice(0, 100) });
+    } else {
+      throw new Error(
+        '无法自动获取视频地址。请尝试使用浏览器扩展提取，或换一个视频链接。',
+      );
+    }
   }
 
   logger.info('extract: starting ASR transcription', { videoUrl, audioUrl: audioUrl.slice(0, 100) });
@@ -104,6 +111,138 @@ export async function extractVideoScript(
     throw new Error(`视频文件无法被语音识别服务访问。原始错误：${msg}`);
   }
   throw new Error(msg);
+}
+
+/**
+ * 服务端自动解析视频直链
+ * 当网站端只传了页面 URL 没有 audioUrl 时，尝试从页面解析出视频直链
+ */
+async function resolveVideoUrl(
+  pageUrl: string,
+  platform: string,
+  awemeId?: string,
+): Promise<string | null> {
+  // 抖音：从 URL 提取 awemeId，然后用移动端分享页获取视频地址
+  if (platform === 'douyin') {
+    const id = awemeId
+      ?? pageUrl.match(/\/video\/(\d+)/)?.[1]
+      ?? pageUrl.match(/modal_id=(\d+)/)?.[1];
+    if (id) {
+      const url = await fetchDouyinVideoUrl(id);
+      if (url) return url;
+    }
+  }
+
+  // B站：尝试获取视频直链（用于 ASR fallback）
+  if (platform === 'bilibili') {
+    return await resolveBilibiliVideoUrl(pageUrl);
+  }
+
+  // 快手：尝试从页面获取视频地址
+  if (platform === 'kuaishou') {
+    return await resolveKuaishouVideoUrl(pageUrl);
+  }
+
+  return null;
+}
+
+/** B站：服务端获取视频音频流用于 ASR */
+async function resolveBilibiliVideoUrl(pageUrl: string): Promise<string | null> {
+  try {
+    const bvMatch = pageUrl.match(/\/video\/(BV[\w]+)/i);
+    const bvid = bvMatch?.[1];
+    if (!bvid) return null;
+
+    // 获取 cid
+    const viewRes = await fetch(
+      `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          Referer: 'https://www.bilibili.com',
+        },
+      },
+    );
+    if (!viewRes.ok) return null;
+    const viewJson = (await viewRes.json()) as { code: number; data?: { cid?: number } };
+    if (viewJson.code !== 0 || !viewJson.data?.cid) return null;
+    const cid = viewJson.data.cid;
+
+    // 获取视频流地址（fnval=16 请求 DASH 格式，包含独立音频流）
+    const playRes = await fetch(
+      `https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${cid}&fnval=16`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          Referer: 'https://www.bilibili.com',
+        },
+      },
+    );
+    if (!playRes.ok) return null;
+    const playJson = (await playRes.json()) as {
+      code: number;
+      data?: {
+        dash?: { audio?: Array<{ baseUrl: string }> };
+        durl?: Array<{ url: string }>;
+      };
+    };
+    if (playJson.code !== 0 || !playJson.data) return null;
+
+    // 优先用 DASH 音频流（纯音频，体积小，ASR 效果好）
+    const dashAudio = playJson.data.dash?.audio?.[0]?.baseUrl;
+    if (dashAudio) {
+      logger.info('extract: resolved bilibili DASH audio', { url: dashAudio.slice(0, 100) });
+      return dashAudio;
+    }
+
+    // fallback: durl（合并流）
+    const durlUrl = playJson.data.durl?.[0]?.url;
+    if (durlUrl) {
+      logger.info('extract: resolved bilibili durl', { url: durlUrl.slice(0, 100) });
+      return durlUrl;
+    }
+
+    return null;
+  } catch (err) {
+    logger.warn('extract: resolveBilibiliVideoUrl failed', { error: String(err) });
+    return null;
+  }
+}
+
+/** 快手：从页面获取视频地址 */
+async function resolveKuaishouVideoUrl(pageUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(pageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+      },
+      redirect: 'follow',
+    });
+    if (!res.ok) return null;
+
+    const html = await res.text();
+    const patterns = [
+      /"playUrl"\s*:\s*"(https?:[^"]+)"/,
+      /"photoUrl"\s*:\s*"(https?:[^"]+)"/,
+      /"srcNoMark"\s*:\s*"(https?:[^"]+)"/,
+      /https?:\/\/[^"'\s\\]+?(?:txvideo|ksyun|kuaishou|ksc\.com|kwaicdn|photocdn)[^"'\s\\]*/i,
+    ];
+
+    for (const pat of patterns) {
+      const match = html.match(pat);
+      if (match?.[1]) {
+        const url = match[1].replace(/\\u002F/g, '/').replace(/\\/g, '');
+        if (url.startsWith('http')) {
+          logger.info('extract: resolved kuaishou video URL', { url: url.slice(0, 100) });
+          return url;
+        }
+      }
+    }
+    return null;
+  } catch (err) {
+    logger.warn('extract: resolveKuaishouVideoUrl failed', { error: String(err) });
+    return null;
+  }
 }
 
 /** 尝试代理下载 + ASR，返回结果或错误 */
