@@ -74,13 +74,17 @@ export async function extractVideoScript(
   // 第一次失败了，检查是否是 "have no audio" 错误
   const isNoAudio = firstResult.error.includes('have no audio');
 
-  // 如果是 "have no audio" 且有 awemeId，尝试通过抖音 API 获取合并视频
-  if (isNoAudio && awemeId && platform === 'douyin') {
-    logger.info('extract: "have no audio" detected, trying douyin API fallback', { awemeId });
+  // 如果是 "have no audio" 且有 awemeId，尝试通过移动端分享页获取合并视频
+  // 抖音、头条、西瓜都是字节系，共享同一套重试逻辑
+  if (isNoAudio && awemeId && (platform === 'douyin' || platform === 'toutiao' || platform === 'ixigua')) {
+    logger.info('extract: "have no audio" detected, trying fallback', { awemeId, platform });
 
-    const fallbackUrl = await fetchDouyinVideoUrl(awemeId);
+    const fallbackUrl = platform === 'douyin'
+      ? await fetchDouyinVideoUrl(awemeId)
+      : await fetchToutiaoVideoUrl(awemeId);
+
     if (fallbackUrl && fallbackUrl !== audioUrl) {
-      logger.info('extract: got fallback URL from douyin API', { fallbackUrl: fallbackUrl.slice(0, 100) });
+      logger.info('extract: got fallback URL', { platform, fallbackUrl: fallbackUrl.slice(0, 100) });
 
       const secondResult = await tryAsrWithProxy(fallbackUrl, platform, proxyDownloadVideo, cleanupTempFile);
       if (secondResult.ok) {
@@ -189,3 +193,94 @@ async function fetchDouyinVideoUrl(awemeId: string): Promise<string | null> {
     return null;
   }
 }
+
+/**
+ * 通过头条/西瓜移动端页面获取视频的播放地址
+ * 头条和西瓜都是字节系，移动端页面通常包含音视频合并的 MP4
+ */
+async function fetchToutiaoVideoUrl(videoId: string): Promise<string | null> {
+  try {
+    // 头条移动端文章/视频页
+    const mobileUrl = `https://m.toutiao.com/i${videoId}/`;
+    const res = await fetch(mobileUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+      },
+      redirect: 'follow',
+    });
+
+    if (!res.ok) {
+      logger.warn('extract: toutiao mobile page failed', { status: res.status });
+      return null;
+    }
+
+    const html = await res.text();
+
+    // 从移动端页面提取视频 URL
+    // 头条移动端页面通常在 script 中包含视频数据
+    const patterns = [
+      // videoPlayUrl / playUrl
+      /"(?:videoPlayUrl|playUrl|video_url|play_addr_lowbr|main_url)"\s*:\s*"(https?:[^"]+)"/,
+      // base64 编码的视频地址
+      /"(?:main_url|video_url|backup_url_1|url)"\s*:\s*"([A-Za-z0-9+/=]{20,})"/,
+      // 字节系 CDN URL
+      /https?:\/\/[^"'\s\\]+?(?:toutiaovod|pstatp|douyinvod|bytevcloudcdn|bytecdn|v\d+-tt)[^"'\s\\]*/i,
+    ];
+
+    for (const pat of patterns) {
+      const match = html.match(pat);
+      if (match?.[1]) {
+        let url = match[1].replace(/\\u002F/g, '/').replace(/\\/g, '');
+        // 尝试 base64 解码
+        if (!url.startsWith('http')) {
+          try {
+            const decoded = Buffer.from(url, 'base64').toString('utf-8');
+            if (decoded.startsWith('http')) url = decoded;
+            else continue;
+          } catch {
+            continue;
+          }
+        }
+        if (url.startsWith('http')) {
+          logger.info('extract: found video URL from toutiao mobile page', { url: url.slice(0, 100) });
+          return url;
+        }
+      }
+    }
+
+    // 兜底：提取所有字节系 CDN URL
+    const vodPat = /https?:\/\/[^"'\s\\]+?(?:toutiaovod|pstatp|douyinvod|bytevcloudcdn|v\d+-tt)[^"'\s\\]*/gi;
+    const vodMatches = html.match(vodPat);
+    if (vodMatches && vodMatches.length > 0) {
+      const url = vodMatches[0].replace(/\\u002F/g, '/').replace(/\\/g, '');
+      logger.info('extract: found vod URL from toutiao mobile page', { url: url.slice(0, 100) });
+      return url;
+    }
+
+    // 再试西瓜视频移动端（头条视频有时也在西瓜上）
+    const ixiguaUrl = `https://m.ixigua.com/video/${videoId}/`;
+    const ixRes = await fetch(ixiguaUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+      },
+      redirect: 'follow',
+    });
+
+    if (ixRes.ok) {
+      const ixHtml = await ixRes.text();
+      const ixVodMatches = ixHtml.match(vodPat);
+      if (ixVodMatches && ixVodMatches.length > 0) {
+        const url = ixVodMatches[0].replace(/\\u002F/g, '/').replace(/\\/g, '');
+        logger.info('extract: found vod URL from ixigua mobile page', { url: url.slice(0, 100) });
+        return url;
+      }
+    }
+
+    logger.warn('extract: no video URL found in toutiao/ixigua mobile pages');
+    return null;
+  } catch (err) {
+    logger.warn('extract: fetchToutiaoVideoUrl failed', { error: String(err) });
+    return null;
+  }
+}
+

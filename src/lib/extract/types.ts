@@ -23,6 +23,7 @@ export interface ExtractionJob {
 export type SupportedVideoPlatform =
   | 'bilibili'
   | 'douyin'
+  | 'ixigua'
   | 'xiaohongshu'
   | 'weibo'
   | 'kuaishou'

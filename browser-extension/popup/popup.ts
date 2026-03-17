@@ -320,8 +320,97 @@ btnExtractScript.addEventListener('click', async () => {
       } else {
         showExtractStatus(`❌ ${dy?.error ?? '抖音视频地址提取失败'}`, 'error');
       }
+      } else if (currentTabUrl.includes('kuaishou.com') && currentTabId) {
+      // 快手：客户端提取视频 URL → 服务端 ASR
+      showExtractStatus('正在从快手提取视频地址...', 'loading');
+
+      const [{ result: ksResult }] = await chrome.scripting.executeScript({
+        target: { tabId: currentTabId },
+        func: () => {
+          try {
+            const urls: string[] = [];
+            const addUrl = (u: string) => {
+              if (u.startsWith('http') && !urls.includes(u)) urls.push(u);
+            };
+
+            // 方法 1：从 video 标签提取
+            for (const el of Array.from(document.querySelectorAll('video'))) {
+              const src = el.getAttribute('src') || (el as HTMLVideoElement).currentSrc;
+              if (src) addUrl(src);
+              el.querySelectorAll('source').forEach((s: Element) => {
+                const ssrc = s.getAttribute('src');
+                if (ssrc) addUrl(ssrc);
+              });
+            }
+
+            // 方法 2：从页面 script 中提取视频 URL
+            const scripts = document.querySelectorAll('script:not([src])');
+            for (const script of Array.from(scripts)) {
+              const text = script.textContent ?? '';
+              // 快手视频 CDN 域名特征
+              const pat = /https?:\/\/[^"'\s\\]+?(?:txvideo\.cn|ksyun\.com|kuaishou|ksc\.com|ali-video|v\d+\.kwaicdn|photocdn)[^"'\s\\]*/gi;
+              const matches = text.match(pat);
+              if (matches) {
+                for (const m of matches) addUrl(m.replace(/\\/g, ''));
+              }
+              // playUrl 字段
+              const playPat = /"(?:playUrl|photoUrl|srcNoMark|url)"\s*:\s*"(https?:[^"]+)"/gi;
+              let match;
+              while ((match = playPat.exec(text)) !== null) {
+                addUrl(match[1].replace(/\\u002F/g, '/').replace(/\\/g, ''));
+              }
+            }
+
+            // 方法 3：从 meta 标签
+            const ogVideo = document.querySelector('meta[property="og:video"]')?.getAttribute('content');
+            if (ogVideo) addUrl(ogVideo);
+            const ogVideoUrl = document.querySelector('meta[property="og:video:url"]')?.getAttribute('content');
+            if (ogVideoUrl) addUrl(ogVideoUrl);
+
+            const best = urls.find(u => /\.mp4|mp4/i.test(u)) ?? urls[0];
+            if (!best) {
+              return { ok: false, error: '无法从快手页面提取视频地址，请确保已打开视频播放页' };
+            }
+            return { ok: true, videoUrl: best, debug: `urls=${urls.length}` };
+          } catch (e) {
+            return { ok: false, error: String(e) };
+          }
+        },
+      });
+
+      const ks = ksResult as { ok: boolean; videoUrl?: string; error?: string; debug?: string } | undefined;
+      if (ks?.ok && ks.videoUrl) {
+        showExtractStatus(`已获取视频地址（${ks.debug ?? ''}），正在提交语音识别任务...`, 'loading');
+        try {
+          const job = await extractVideoScript(currentTabUrl, ks.videoUrl);
+          showExtractStatus(`语音识别任务已提交（${job.platform}），正在处理...`, 'loading');
+
+          const result = await waitForExtraction(job.jobId);
+
+          if (result.status === 'completed' && result.result?.text) {
+            extractedContent = result.result.text;
+            contentValid = true;
+            contentPreview.textContent = extractedContent.slice(0, 120) + (extractedContent.length > 120 ? '...' : '');
+            contentPreview.classList.remove('invalid');
+            btnGenerate.disabled = false;
+            contentExpanded = false;
+            btnToggleContent.textContent = '展开全文';
+            showExtractStatus('✅ 快手视频语音识别完成，可以生成文案了', 'success');
+          } else {
+            showExtractStatus(`❌ 语音识别失败：${result.error ?? '未知错误'}`, 'error');
+          }
+        } catch (err) {
+          showExtractStatus(`❌ ${(err as Error).message}`, 'error');
+        }
+      } else {
+        showExtractStatus(`❌ ${ks?.error ?? '快手视频地址提取失败'}`, 'error');
+      }
+      } else if ((currentTabUrl.includes('ixigua.com') || currentTabUrl.includes('toutiao.com')) && currentTabId) {
+      // 西瓜视频 / 今日头条：当前版本暂不支持视频脚本提取（DASH 音视频分离问题）
+      const platformName = currentTabUrl.includes('toutiao.com') ? '今日头条' : '西瓜视频';
+      showExtractStatus(`⚠️ ${platformName}视频脚本提取功能将在下个版本支持，敬请期待`, 'error');
     } else {
-      // 非 B站：走服务端提取
+      // 非 B站/抖音/快手/西瓜/头条：走服务端提取
       showExtractStatus('正在提交视频脚本提取任务...', 'loading');
       const job = await extractVideoScript(currentTabUrl);
       showExtractStatus(`任务已提交，正在提取（${job.platform}）...`, 'loading');

@@ -13,6 +13,7 @@ const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
 /** 平台对应的 Referer */
 const REFERER_MAP: Record<string, string> = {
   douyin: 'https://www.douyin.com/',
+  ixigua: 'https://www.ixigua.com/',
   kuaishou: 'https://www.kuaishou.com/',
   xiaohongshu: 'https://www.xiaohongshu.com/',
   weibo: 'https://weibo.com/',
