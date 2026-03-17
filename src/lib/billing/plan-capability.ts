@@ -11,6 +11,7 @@ interface PlanRow {
   has_history: boolean;
   has_api_access: boolean;
   has_team_access: boolean;
+  has_batch_access: boolean;
   speed_tier: SpeedTier;
 }
 
@@ -23,6 +24,7 @@ function mapPlanRow(row: PlanRow): PlanCapability {
     canUseHistory: row.has_history,
     canUseApi: row.has_api_access,
     canUseTeam: row.has_team_access,
+    canUseBatch: row.has_batch_access,
     speedTier: row.speed_tier,
   };
 }
@@ -48,7 +50,7 @@ export async function getPlanCapability(userId: string): Promise<PlanCapability>
   let planQuery = db
     .from('plans')
     .select(
-      'code, display_name, platform_limit, monthly_generation_limit, has_history, has_api_access, has_team_access, speed_tier',
+      'code, display_name, platform_limit, monthly_generation_limit, has_history, has_api_access, has_team_access, has_batch_access, speed_tier',
     );
 
   if (sub?.plan_id) {

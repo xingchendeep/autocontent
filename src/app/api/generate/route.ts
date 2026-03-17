@@ -17,6 +17,7 @@ import { createServiceRoleClient } from '@/lib/db/client';
 import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
 import { checkContent } from '@/lib/moderation';
 import { writeAuditLog } from '@/lib/db/audit-logger';
+import { getTemplateById } from '@/lib/templates/service';
 import type { PlatformCode, GenerateResponse } from '@/types';
 
 const platformCodeSchema = z.enum(
@@ -27,9 +28,10 @@ const requestSchema = z.object({
   content: z.string().min(1).max(100000),
   platforms: z.array(platformCodeSchema).min(1).max(10),
   source: z.enum(['manual', 'extract']).optional(),
+  templateId: z.string().uuid().optional(),
   options: z
     .object({
-      tone: z.enum(['professional', 'casual', 'humorous']).optional(),
+      tone: z.enum(['professional', 'casual', 'humorous', 'authoritative', 'empathetic']).optional(),
       length: z.enum(['short', 'medium', 'long']).optional(),
     })
     .optional(),
@@ -93,7 +95,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { content, platforms, options } = parsed.data;
+  const { content, platforms, options, templateId } = parsed.data;
 
   // ── Rate limiting (after Zod validation, before plan check and moderation) ──
   if (!userId) {
@@ -183,6 +185,37 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // ── Template resolution (authenticated users only) ──
+  let resolvedOptions = options ?? {};
+  if (templateId) {
+    if (!userId) {
+      return NextResponse.json(
+        createError(ERROR_CODES.UNAUTHORIZED, '使用模板需要登录', requestId),
+        { status: ERROR_STATUS.UNAUTHORIZED, headers: { 'x-request-id': requestId } },
+      );
+    }
+    let template;
+    try {
+      template = await getTemplateById(templateId, userId);
+    } catch {
+      return NextResponse.json(
+        createError(ERROR_CODES.SERVICE_UNAVAILABLE, '模板读取失败，请稍后重试', requestId),
+        { status: ERROR_STATUS.SERVICE_UNAVAILABLE, headers: { 'x-request-id': requestId } },
+      );
+    }
+    if (!template) {
+      return NextResponse.json(
+        createError(ERROR_CODES.NOT_FOUND, '模板不存在或无权使用', requestId),
+        { status: ERROR_STATUS.NOT_FOUND, headers: { 'x-request-id': requestId } },
+      );
+    }
+    // Merge: explicit request params > template params > system defaults
+    resolvedOptions = {
+      tone: options?.tone ?? template.tone,
+      length: options?.length ?? template.length,
+    };
+  }
+
   // ── Content moderation (after rate limit, before AI generation) ──
   const modResult = checkContent(content);
   if (modResult.blocked) {
@@ -206,7 +239,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   logger.info('generate start', { requestId, platforms, contentLength: content.length });
 
-  const serviceResult = await generateAll(content, platforms, options);
+  const serviceResult = await generateAll(content, platforms, resolvedOptions);
 
   // All platforms failed
   if (Object.keys(serviceResult.results).length === 0) {

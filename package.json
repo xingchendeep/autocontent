@@ -13,6 +13,7 @@
     "test:integration:auth": "vitest run --config tests/integration/auth/vitest.config.ts",
     "supabase:start": "supabase start",
     "supabase:push": "supabase db push --local",
+    "test:property": "vitest run --config tests/property/vitest.config.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {

@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "AutoContent Pro",
+  "version": "0.1.0",
+  "description": "一键将当前页面内容转换为多平台社交媒体文案",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "http://localhost:3000/*"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "AutoContent Pro"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  }
+}

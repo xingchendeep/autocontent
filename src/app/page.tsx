@@ -80,15 +80,11 @@ function reducer(state: PageState, action: Action): PageState {
 
 export default function HomePage() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [history, setHistory] = useState<HistoryRecord[]>(() => readHistory());
 
   // Task 7.1: Auth and cloud history hooks
   const { user, loading: authLoading } = useAuth();
   const cloudHistory = useCloudHistory(!!user);
-
-  useEffect(() => {
-    setHistory(readHistory());
-  }, []);
 
   useEffect(() => { trackPageView(); }, []);
 

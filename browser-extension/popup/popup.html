@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoContent Pro</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1 class="title">AutoContent Pro</h1>
+      <button id="btn-settings" class="btn-icon" title="API Key 设置">⚙️</button>
+    </header>
+
+    <!-- API Key 配置区域（默认隐藏） -->
+    <section id="section-settings" class="section hidden">
+      <label class="label" for="input-apikey">API Key</label>
+      <input id="input-apikey" type="password" class="input" placeholder="acp_..." />
+      <div class="row">
+        <button id="btn-save-key" class="btn btn-primary">保存</button>
+        <button id="btn-clear-key" class="btn btn-ghost">清除</button>
+      </div>
+    </section>
+
+    <!-- 内容摘要区域 -->
+    <section class="section">
+      <label class="label">页面内容</label>
+      <div id="content-preview" class="preview">正在提取页面内容...</div>
+      <div id="content-actions" class="content-actions hidden">
+        <button id="btn-toggle-content" class="btn btn-ghost btn-sm">展开全文</button>
+        <button id="btn-copy-content" class="btn btn-ghost btn-sm">复制内容</button>
+      </div>
+    </section>
+
+    <!-- 平台选择器 -->
+    <section class="section">
+      <label class="label">选择平台</label>
+      <div class="platforms">
+        <label class="platform-item"><input type="checkbox" value="douyin" checked /> 抖音</label>
+        <label class="platform-item"><input type="checkbox" value="xiaohongshu" checked /> 小红书</label>
+        <label class="platform-item"><input type="checkbox" value="bilibili" /> 哔哩哔哩</label>
+        <label class="platform-item"><input type="checkbox" value="weibo" /> 微博</label>
+        <label class="platform-item"><input type="checkbox" value="wechat" /> 微信公众号</label>
+        <label class="platform-item"><input type="checkbox" value="twitter" /> Twitter/X</label>
+        <label class="platform-item"><input type="checkbox" value="linkedin" /> LinkedIn</label>
+        <label class="platform-item"><input type="checkbox" value="kuaishou" /> 快手</label>
+        <label class="platform-item"><input type="checkbox" value="zhihu" /> 知乎</label>
+        <label class="platform-item"><input type="checkbox" value="toutiao" /> 今日头条</label>
+      </div>
+    </section>
+
+    <!-- 生成按钮 -->
+    <button id="btn-generate" class="btn btn-primary btn-full" disabled>生成文案</button>
+
+    <!-- 错误提示 -->
+    <div id="error-msg" class="error hidden"></div>
+
+    <!-- 结果展示区域 -->
+    <section id="section-results" class="section hidden">
+      <label class="label">生成结果</label>
+      <div id="results-list"></div>
+    </section>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

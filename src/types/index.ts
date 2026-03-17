@@ -91,6 +91,7 @@ export interface PlanCapability {
   canUseHistory: boolean;
   canUseApi: boolean;
   canUseTeam: boolean;
+  canUseBatch: boolean;
   speedTier: 'standard' | 'fast' | 'priority' | 'dedicated';
 }
 

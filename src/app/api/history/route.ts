@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { createSupabaseServerClient } from '@/lib/auth/server';
 import { generateRequestId, createSuccess, createError, ERROR_CODES, ERROR_STATUS } from '@/lib/errors';
+import { getMemberRole } from '@/lib/teams';
 import { createSnippet } from '@/lib/snippets';
 import type { HistorySummaryItem } from '@/types';
 
@@ -11,6 +12,7 @@ const querySchema = z.object({
   limit:    z.coerce.number().int().min(1).max(100).default(20),
   platform: z.string().optional(),
   status:   z.enum(['success', 'failed', 'partial']).optional(),
+  teamId:   z.string().uuid().optional(),
 });
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -36,7 +38,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { page, limit, platform, status } = parsed.data;
+  const { page, limit, platform, status, teamId } = parsed.data;
+
+  // If teamId provided, verify the requesting user is a member of that team
+  if (teamId) {
+    const role = await getMemberRole(teamId, session.id);
+    if (!role) {
+      return NextResponse.json(
+        createError(ERROR_CODES.FORBIDDEN, '您不是该团队成员', requestId),
+        { status: ERROR_STATUS.FORBIDDEN, headers: { 'x-request-id': requestId } },
+      );
+    }
+  }
+
   const from = (page - 1) * limit;
   const to = page * limit - 1;
 
