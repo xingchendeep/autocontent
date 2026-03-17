@@ -176,3 +176,26 @@ body {
 }
 
 .hidden { display: none !important; }
+
+.extract-status {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.extract-status.loading {
+  background: #ebf8ff;
+  color: #2b6cb0;
+}
+
+.extract-status.success {
+  background: #f0fff4;
+  color: #276749;
+}
+
+.extract-status.error {
+  background: #fff5f5;
+  color: #c53030;
+}

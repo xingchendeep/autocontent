@@ -27,7 +27,7 @@ export function buildRateLimitKey(
   scope: 'generate' | 'extract',
   dimension: 'ip' | 'user',
   identifier: string,
-  windowLabel: '1h',
+  windowLabel: '1h' | '1d',
 ): string {
   return `rl:${scope}:${dimension}:${identifier}:${windowLabel}`;
 }

@@ -43,3 +43,6 @@ next-env.d.ts
 # browser extension build artifacts
 browser-extension/node_modules/
 browser-extension/dist/
+
+# temp video proxy files
+.tmp/
