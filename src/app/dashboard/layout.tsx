@@ -1,5 +1,8 @@
-import Link from 'next/link';
 import { getSession } from '@/lib/auth';
+import { DashboardNav } from '@/components/dashboard/DashboardNav';
+import { TeamContextSwitcher } from '@/components/dashboard/TeamContextSwitcher';
+import { TeamContextProvider } from '@/contexts/TeamContext';
+import { ToastProvider } from '@/contexts/ToastContext';
 
 export default async function DashboardLayout({
   children,
@@ -9,30 +12,30 @@ export default async function DashboardLayout({
   const session = await getSession();
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="border-b border-zinc-200 bg-white px-6 py-3">
-        <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <nav className="flex items-center gap-4">
-            <span className="text-sm font-semibold text-zinc-900">AutoContent Pro</span>
-            <Link href="/dashboard" className="text-sm text-zinc-500 hover:text-zinc-900">控制台</Link>
-            <Link href="/dashboard/history" className="text-sm text-zinc-500 hover:text-zinc-900">生成记录</Link>
-            <Link href="/dashboard/scripts" className="text-sm text-zinc-500 hover:text-zinc-900">脚本库</Link>
-            <Link href="/dashboard/api-keys" className="text-sm text-zinc-500 hover:text-zinc-900">API Keys</Link>
-            <Link href="/dashboard/subscription" className="text-sm text-zinc-500 hover:text-zinc-900">订阅</Link>
-          </nav>
-          {session && (
-            <form action="/api/signout" method="POST">
-              <button
-                type="submit"
-                className="text-sm text-zinc-500 hover:text-zinc-900 hover:underline"
-              >
-                退出登录
-              </button>
-            </form>
-          )}
+    <ToastProvider>
+      <TeamContextProvider>
+        <div className="flex min-h-screen flex-col">
+          <header className="border-b border-zinc-200 bg-white px-6 py-3">
+            <div className="mx-auto flex max-w-5xl items-center justify-between">
+              <DashboardNav />
+              <div className="flex shrink-0 items-center gap-4">
+                <TeamContextSwitcher />
+                {session && (
+                  <form action="/api/signout" method="POST">
+                    <button
+                      type="submit"
+                      className="shrink-0 text-sm text-zinc-500 hover:text-zinc-900 hover:underline"
+                    >
+                      退出登录
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+          </header>
+          <main className="flex-1">{children}</main>
         </div>
-      </header>
-      <main className="flex-1">{children}</main>
-    </div>
+      </TeamContextProvider>
+    </ToastProvider>
   );
 }

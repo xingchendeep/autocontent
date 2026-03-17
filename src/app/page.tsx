@@ -9,6 +9,7 @@ import FileUploadInput from '@/components/generate/FileUploadInput';
 import PlatformSelector from '@/components/generate/PlatformSelector';
 import GenerateButton from '@/components/generate/GenerateButton';
 import ResultCard from '@/components/generate/ResultCard';
+import { TemplateSelector } from '@/components/generate/TemplateSelector';
 import { readHistory, prependHistory } from '@/lib/localHistory';
 import { useAuth } from '@/hooks/useAuth';
 import { useCloudHistory } from '@/hooks/useCloudHistory';
@@ -93,6 +94,7 @@ export default function HomePage() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [history, setHistory] = useState<HistoryRecord[]>(() => readHistory());
   const [inputMode, setInputMode] = useState<'text' | 'url' | 'upload'>('text');
+  const [templateId, setTemplateId] = useState<string | null>(null);
 
   // Task 7.1: Auth and cloud history hooks
   const { user, loading: authLoading } = useAuth();
@@ -159,6 +161,7 @@ export default function HomePage() {
         body: JSON.stringify({
           content: state.content,
           platforms: state.selectedPlatforms,
+          ...(templateId ? { templateId } : {}),
         }),
       });
 
@@ -301,6 +304,11 @@ export default function HomePage() {
             </div>
           )}
         </div>
+
+        {/* Template selector — only for logged-in users */}
+        {user && (
+          <TemplateSelector selectedId={templateId} onSelect={setTemplateId} />
+        )}
 
         {/* Platform selector */}
         <PlatformSelector

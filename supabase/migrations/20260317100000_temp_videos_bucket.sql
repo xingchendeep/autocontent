@@ -1,3 +1,5 @@
+BEGIN;
+
 -- 创建临时视频存储桶（用于 ASR 语音识别代理）
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
@@ -10,12 +12,16 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 
 -- 允许公开读取（DashScope 需要下载）
+DROP POLICY IF EXISTS "Public read temp videos" ON storage.objects;
 CREATE POLICY "Public read temp videos"
   ON storage.objects FOR SELECT
   USING (bucket_id = 'temp-videos');
 
 -- 只允许 service_role 上传和删除
+DROP POLICY IF EXISTS "Service role manage temp videos" ON storage.objects;
 CREATE POLICY "Service role manage temp videos"
   ON storage.objects FOR ALL
   USING (bucket_id = 'temp-videos')
   WITH CHECK (bucket_id = 'temp-videos');
+
+COMMIT;

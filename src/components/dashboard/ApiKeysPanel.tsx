@@ -11,7 +11,7 @@ interface NewKey {
   createdAt: string;
 }
 
-export default function ApiKeysPanel({ initialKeys }: { initialKeys: ApiKeyItem[] }) {
+export default function ApiKeysPanel({ initialKeys, disabled }: { initialKeys: ApiKeyItem[]; disabled?: boolean }) {
   const [keys, setKeys] = useState<ApiKeyItem[]>(initialKeys);
   const [newKeyName, setNewKeyName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -79,11 +79,12 @@ export default function ApiKeysPanel({ initialKeys }: { initialKeys: ApiKeyItem[
           value={newKeyName}
           onChange={(e) => setNewKeyName(e.target.value)}
           maxLength={100}
-          className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900"
+          disabled={disabled}
+          className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-100 disabled:text-zinc-400"
         />
         <button
           type="submit"
-          disabled={creating || !newKeyName.trim()}
+          disabled={creating || !newKeyName.trim() || disabled}
           className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
         >
           {creating ? '创建中…' : '创建 Key'}
