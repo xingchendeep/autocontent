@@ -46,3 +46,6 @@ browser-extension/dist/
 
 # temp video proxy files
 .tmp/
+
+# large binary files
+chrome-win64.zip
