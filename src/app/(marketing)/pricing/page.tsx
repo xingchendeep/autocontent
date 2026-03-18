@@ -3,6 +3,8 @@ import { getSession } from '@/lib/auth';
 import PricingCard from '@/components/pricing/PricingCard';
 import type { PricingPlan } from '@/types';
 
+export const dynamic = 'force-dynamic';
+
 interface PlanRow {
   code: string;
   display_name: string;
