@@ -5,7 +5,7 @@ import { createSupabaseMiddlewareClient } from '@/lib/auth/middleware-client';
 /**
  * Edge Middleware — runs before every matched request.
  * Calls getUser() to trigger token refresh and write updated cookies.
- * Protects /dashboard/* and redirects authenticated users away from /login.
+ * Protects /dashboard/* and redirects authenticated users away from /login, /register, /forgot-password.
  */
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next({ request });
@@ -19,11 +19,11 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  if (pathname.startsWith('/dashboard') && !user) {
+  if ((pathname.startsWith('/dashboard') || pathname.startsWith('/admin')) && !user) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  if (pathname === '/login' && user) {
+  if ((pathname === '/login' || pathname === '/register' || pathname === '/forgot-password') && user) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
@@ -31,5 +31,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/login'],
+  matcher: ['/dashboard/:path*', '/admin/:path*', '/login', '/register', '/forgot-password'],
 };

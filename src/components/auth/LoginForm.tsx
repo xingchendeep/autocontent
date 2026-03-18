@@ -1,10 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { z } from 'zod';
+import Link from 'next/link';
 import { createSupabaseBrowserClient } from '@/lib/auth/client';
-
-const emailSchema = z.string().email('请输入有效的邮箱地址');
+import { loginFormSchema, emailSchema } from '@/lib/validations/auth';
 
 type UIState = 'idle' | 'loading' | 'sent' | 'error';
 type AuthMode = 'magic-link' | 'password';
@@ -12,47 +11,65 @@ type AuthMode = 'magic-link' | 'password';
 export default function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [authMode, setAuthMode] = useState<AuthMode>('magic-link');
+  const [authMode, setAuthMode] = useState<AuthMode>('password');
   const [uiState, setUiState] = useState<UIState>('idle');
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-
-    const result = emailSchema.safeParse(email);
-    if (!result.success) {
-      setValidationError(result.error.issues[0]?.message ?? '邮箱格式无效');
-      return;
-    }
-    setValidationError(null);
-    setUiState('loading');
+    setEmailError(null);
+    setPasswordError(null);
     setErrorMessage(null);
 
     const supabase = createSupabaseBrowserClient();
 
     if (authMode === 'password') {
-      if (!password) {
-        setUiState('error');
-        setErrorMessage('请输入密码');
+      const result = loginFormSchema.safeParse({ email, password });
+      if (!result.success) {
+        for (const issue of result.error.issues) {
+          if (issue.path[0] === 'email') {
+            setEmailError(issue.message);
+          } else if (issue.path[0] === 'password') {
+            setPasswordError(issue.message);
+          }
+        }
         return;
       }
+
+      setUiState('loading');
+
       const { error } = await supabase.auth.signInWithPassword({
-        email: result.data,
-        password,
+        email: result.data.email,
+        password: result.data.password,
       });
+
       if (error) {
         setUiState('error');
-        setErrorMessage(error.message || '登录失败，请检查邮箱和密码');
+        if (error.message === 'Invalid login credentials') {
+          setErrorMessage('邮箱或密码错误，请重试');
+        } else {
+          setErrorMessage(error.message || '登录失败，请稍后重试');
+        }
         return;
       }
+
       window.location.href = '/dashboard';
       return;
     }
 
-    // Magic link flow
+    // Magic link flow — validate email only
+    const emailResult = emailSchema.safeParse(email);
+    if (!emailResult.success) {
+      setEmailError(emailResult.error.issues[0]?.message ?? '邮箱格式无效');
+      return;
+    }
+
+    setUiState('loading');
+
     const { error } = await supabase.auth.signInWithOtp({
-      email: result.data,
+      email: emailResult.data,
       options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
     });
 
@@ -85,16 +102,16 @@ export default function LoginForm() {
           value={email}
           onChange={(e) => {
             setEmail(e.target.value);
-            if (validationError) setValidationError(null);
+            if (emailError) setEmailError(null);
           }}
           placeholder="you@example.com"
           className="rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
-          aria-describedby={validationError ? 'email-error' : undefined}
-          aria-invalid={validationError ? 'true' : undefined}
+          aria-describedby={emailError ? 'email-error' : undefined}
+          aria-invalid={emailError ? 'true' : undefined}
         />
-        {validationError && (
+        {emailError && (
           <p id="email-error" className="text-xs text-red-600" role="alert">
-            {validationError}
+            {emailError}
           </p>
         )}
       </div>
@@ -109,10 +126,20 @@ export default function LoginForm() {
             type="password"
             autoComplete="current-password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (passwordError) setPasswordError(null);
+            }}
             placeholder="输入密码"
             className="rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+            aria-describedby={passwordError ? 'password-error' : undefined}
+            aria-invalid={passwordError ? 'true' : undefined}
           />
+          {passwordError && (
+            <p id="password-error" className="text-xs text-red-600" role="alert">
+              {passwordError}
+            </p>
+          )}
         </div>
       )}
 
@@ -134,12 +161,27 @@ export default function LoginForm() {
             : '发送登录链接'}
       </button>
 
+      {authMode === 'password' && (
+        <Link
+          href="/forgot-password"
+          className="text-center text-xs text-zinc-400 hover:text-zinc-600"
+        >
+          忘记密码？
+        </Link>
+      )}
+
       <button
         type="button"
-        onClick={() => setAuthMode(authMode === 'magic-link' ? 'password' : 'magic-link')}
+        onClick={() => {
+          setAuthMode(authMode === 'password' ? 'magic-link' : 'password');
+          setEmailError(null);
+          setPasswordError(null);
+          setErrorMessage(null);
+          setUiState('idle');
+        }}
         className="text-xs text-zinc-400 hover:text-zinc-600"
       >
-        {authMode === 'magic-link' ? '使用密码登录' : '使用邮箱链接登录'}
+        {authMode === 'password' ? '使用邮箱链接登录' : '使用密码登录'}
       </button>
     </form>
   );

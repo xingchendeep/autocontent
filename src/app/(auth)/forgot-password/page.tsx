@@ -1,20 +1,20 @@
 import Link from 'next/link';
-import LoginForm from '@/components/auth/LoginForm';
+import ForgotPasswordForm from '@/components/auth/ForgotPasswordForm';
 
 export const metadata = {
-  title: '登录 — AutoContent Pro',
+  title: '忘记密码 — AutoContent Pro',
 };
 
-export default function LoginPage() {
+export default function ForgotPasswordPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
       <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
         <div className="mb-6 text-center">
           <h1 className="text-xl font-bold text-zinc-900">AutoContent Pro</h1>
-          <p className="mt-1 text-sm text-zinc-500">登录您的账户</p>
+          <p className="mt-1 text-sm text-zinc-500">重置您的密码</p>
         </div>
 
-        <LoginForm />
+        <ForgotPasswordForm />
 
         <noscript>
           <p className="mt-4 text-center text-xs text-zinc-400">
@@ -23,9 +23,8 @@ export default function LoginPage() {
         </noscript>
 
         <p className="mt-4 text-center text-sm text-zinc-500">
-          没有账户？
-          <Link href="/register" className="text-zinc-900 underline hover:text-zinc-700">
-            注册
+          <Link href="/login" className="text-zinc-900 underline hover:text-zinc-700">
+            返回登录
           </Link>
         </p>
       </div>
