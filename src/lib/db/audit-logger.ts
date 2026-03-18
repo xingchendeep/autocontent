@@ -12,7 +12,17 @@ export type AuditAction =
   | 'GENERATION_FAILED'
   | 'WEBHOOK_SIGNATURE_INVALID'
   | 'CHECKOUT_FAILED'
-  | 'CONTENT_BLOCKED';
+  | 'CONTENT_BLOCKED'
+  // Admin panel actions
+  | 'SITE_SETTING_UPDATED'
+  | 'USER_DISABLED'
+  | 'USER_ENABLED'
+  | 'USER_ROLE_CHANGED'
+  | 'SUBSCRIPTION_ADMIN_CHANGED'
+  | 'TEMPLATE_UPDATED'
+  | 'KEYWORD_ADDED'
+  | 'KEYWORD_REMOVED'
+  | 'SYSTEM_CONFIG_UPDATED';
 
 export interface AuditLogEntry {
   action: AuditAction;

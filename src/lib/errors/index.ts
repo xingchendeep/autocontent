@@ -16,6 +16,8 @@ export const ERROR_CODES = {
   WEBHOOK_SIGNATURE_INVALID:  'WEBHOOK_SIGNATURE_INVALID',
   NOT_FOUND:                  'NOT_FOUND',
   FORBIDDEN:                  'FORBIDDEN',
+  ACCOUNT_DISABLED:           'ACCOUNT_DISABLED',
+  INSUFFICIENT_PERMISSIONS:   'INSUFFICIENT_PERMISSIONS',
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
@@ -36,6 +38,8 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   INTERNAL_ERROR:             500,
   NOT_FOUND:                  404,
   FORBIDDEN:                  403,
+  ACCOUNT_DISABLED:           403,
+  INSUFFICIENT_PERMISSIONS:   403,
 };
 
 // --- Factory functions ---

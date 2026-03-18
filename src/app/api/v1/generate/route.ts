@@ -116,7 +116,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── Content moderation ──
-  const modResult = checkContent(content);
+  const modResult = await checkContent(content);
   if (modResult.blocked) {
     return NextResponse.json(
       createError(ERROR_CODES.CONTENT_BLOCKED, '内容包含不允许的词汇，请修改后重试', requestId),

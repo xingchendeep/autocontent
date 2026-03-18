@@ -18,6 +18,7 @@ import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
 import { checkContent } from '@/lib/moderation';
 import { writeAuditLog } from '@/lib/db/audit-logger';
 import { getTemplateById } from '@/lib/templates/service';
+import { getSystemConfigInt } from '@/lib/admin/system-config';
 import type { PlatformCode, GenerateResponse } from '@/types';
 
 const platformCodeSchema = z.enum(
@@ -98,11 +99,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const { content, platforms, options, templateId } = parsed.data;
 
   // ── Rate limiting (after Zod validation, before plan check and moderation) ──
+  const rateLimitPerMinute = await getSystemConfigInt('rate_limit_per_minute', 20);
   if (!userId) {
-    // Anonymous: IP only, 5 req/h
+    // Anonymous: IP only, use system config rate limit
     const rl = await checkRateLimit(
       buildRateLimitKey('generate', 'ip', ip, '1h'),
-      5,
+      rateLimitPerMinute * 3, // scale per-minute to per-hour
       3600,
     );
     if (!rl.allowed) {
@@ -217,7 +219,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── Content moderation (after rate limit, before AI generation) ──
-  const modResult = checkContent(content);
+  const modResult = await checkContent(content);
   if (modResult.blocked) {
     const errResponse = createError(ERROR_CODES.CONTENT_BLOCKED, '内容包含不允许的词汇，请修改后重试', requestId);
     // Fire-and-forget audit — matchedKeywords NOT stored

@@ -1,6 +1,7 @@
 import type { GeneratePlatformInput, GeneratePlatformOutput } from '@/types';
-import { PLATFORM_TEMPLATES } from '@/lib/ai/templates';
+import { PLATFORM_TEMPLATES, type PlatformTemplate } from '@/lib/ai/templates';
 import { ERROR_CODES } from '@/lib/errors';
+import { createServiceRoleClient } from '@/lib/db/client';
 
 // --- AIProvider interface ---
 
@@ -8,10 +9,38 @@ export interface AIProvider {
   generate(input: GeneratePlatformInput): Promise<GeneratePlatformOutput>;
 }
 
+// --- Template resolver with DB fallback ---
+
+async function resolveTemplate(platform: string): Promise<PlatformTemplate> {
+  try {
+    const db = createServiceRoleClient();
+    const { data, error } = await db
+      .from('system_templates')
+      .select('*')
+      .eq('platform', platform)
+      .single();
+
+    if (!error && data) {
+      return {
+        platform: data.platform,
+        displayName: data.display_name,
+        promptInstructions: data.prompt_instructions,
+        maxTitleLength: data.max_title_length,
+        maxContentLength: data.max_content_length,
+        hashtagStyle: data.hashtag_style,
+        promptVersion: data.prompt_version,
+      } as PlatformTemplate;
+    }
+  } catch {
+    // Fall through to constant
+  }
+  return PLATFORM_TEMPLATES[platform as keyof typeof PLATFORM_TEMPLATES];
+}
+
 // --- Prompt builder ---
 
-function buildPrompt(input: GeneratePlatformInput): string {
-  const template = PLATFORM_TEMPLATES[input.platform];
+async function buildPrompt(input: GeneratePlatformInput): Promise<string> {
+  const template = await resolveTemplate(input.platform);
   const toneNote = input.tone ? `语气风格：${input.tone}。` : '';
   const lengthNote = input.length ? `长度要求：${input.length}。` : '';
 
@@ -69,7 +98,7 @@ export class DashScopeProvider implements AIProvider {
   }
 
   async generate(input: GeneratePlatformInput): Promise<GeneratePlatformOutput> {
-    const prompt = buildPrompt(input);
+    const prompt = await buildPrompt(input);
 
     const messages: DashScopeMessage[] = [
       { role: 'user', content: prompt },
