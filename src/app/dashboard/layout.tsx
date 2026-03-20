@@ -1,6 +1,7 @@
 import { getSession } from '@/lib/auth';
 import { DashboardNav } from '@/components/dashboard/DashboardNav';
 import { TeamContextSwitcher } from '@/components/dashboard/TeamContextSwitcher';
+import { UserMenu } from '@/components/dashboard/UserMenu';
 import { TeamContextProvider } from '@/contexts/TeamContext';
 import { ToastProvider } from '@/contexts/ToastContext';
 
@@ -20,16 +21,7 @@ export default async function DashboardLayout({
               <DashboardNav />
               <div className="flex shrink-0 items-center gap-4">
                 <TeamContextSwitcher />
-                {session && (
-                  <form action="/api/signout" method="POST">
-                    <button
-                      type="submit"
-                      className="shrink-0 text-sm text-zinc-500 hover:text-zinc-900 hover:underline"
-                    >
-                      退出登录
-                    </button>
-                  </form>
-                )}
+                {session && <UserMenu email={session.email} />}
               </div>
             </div>
           </header>
