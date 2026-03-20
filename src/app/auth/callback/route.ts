@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/auth/server';
+import { createServerClient } from '@supabase/ssr';
 
 /**
  * Handles Supabase Auth callback (Magic Link / OAuth PKCE flow).
- * Exchanges the `code` param for a session, then redirects to dashboard.
- * On failure, redirects to /login?error=auth_failed.
+ * Must use NextResponse-based cookie adapter so session cookies are
+ * written into the redirect response — next/headers cookies() cannot
+ * attach Set-Cookie headers to a redirect in Route Handlers.
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl;
@@ -12,10 +13,26 @@ export async function GET(request: NextRequest) {
   const next = searchParams.get('next') ?? '/dashboard';
 
   if (code) {
-    const supabase = await createSupabaseServerClient();
+    const redirectResponse = NextResponse.redirect(new URL(next, origin));
+
+    const supabase = createServerClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll: () => request.cookies.getAll(),
+          setAll: (cookiesToSet) => {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              redirectResponse.cookies.set(name, value, options);
+            });
+          },
+        },
+      }
+    );
+
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      return NextResponse.redirect(new URL(next, origin));
+      return redirectResponse;
     }
     console.error('[auth/callback] exchangeCodeForSession error:', error.message);
   }
