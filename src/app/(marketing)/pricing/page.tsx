@@ -17,6 +17,7 @@ interface PlanRow {
   has_team_access: boolean;
   has_batch_access: boolean;
   is_active: boolean;
+  metadata: Record<string, unknown> | null;
 }
 
 export default async function PricingPage() {
@@ -24,7 +25,7 @@ export default async function PricingPage() {
 
   const { data: rows } = await db
     .from('plans')
-    .select('code, display_name, price_cents, monthly_generation_limit, platform_limit, speed_tier, has_history, has_api_access, has_team_access, has_batch_access, is_active')
+    .select('code, display_name, price_cents, monthly_generation_limit, platform_limit, speed_tier, has_history, has_api_access, has_team_access, has_batch_access, is_active, metadata')
     .eq('is_active', true)
     .order('price_cents', { ascending: true });
 
@@ -39,6 +40,7 @@ export default async function PricingPage() {
     hasApiAccess: r.has_api_access,
     hasTeamAccess: r.has_team_access,
     hasBatchAccess: r.has_batch_access,
+    features: (r.metadata?.features as string[]) ?? [],
   }));
 
   const session = await getSession();

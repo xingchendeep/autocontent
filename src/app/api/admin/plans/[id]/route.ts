@@ -15,6 +15,7 @@ const updatePlanSchema = z.object({
   hasTeamAccess: z.boolean().optional(),
   hasBatchAccess: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  features: z.array(z.string()).optional(),
 });
 
 export async function PATCH(

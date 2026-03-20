@@ -17,6 +17,7 @@ interface PlanItem {
   hasTeamAccess: boolean;
   hasBatchAccess: boolean;
   isActive: boolean;
+  features: string[];
   updatedAt: string;
 }
 
@@ -76,6 +77,7 @@ export function PlanManager() {
           hasTeamAccess: form.hasTeamAccess,
           hasBatchAccess: form.hasBatchAccess,
           isActive: form.isActive,
+          features: form.features,
         }),
       });
       const json = await res.json();
@@ -182,6 +184,16 @@ export function PlanManager() {
                       {label}
                     </label>
                   ))}
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">自定义特性描述（每行一条，显示在前台定价卡片）</label>
+                  <textarea
+                    value={(form.features ?? []).join('\n')}
+                    onChange={(e) => setForm({ ...form, features: e.target.value.split('\n').filter(Boolean) })}
+                    placeholder="例如：&#10;专属客服支持&#10;优先处理队列&#10;自定义模板"
+                    rows={4}
+                    className="w-full rounded border border-zinc-300 px-3 py-1.5 text-sm"
+                  />
                 </div>
                 <div className="flex gap-2">
                   <button

@@ -15,6 +15,7 @@ export interface AdminPlanItem {
   hasTeamAccess: boolean;
   hasBatchAccess: boolean;
   isActive: boolean;
+  features: string[];
   updatedAt: string;
 }
 
@@ -22,7 +23,7 @@ export async function listPlans(): Promise<AdminPlanItem[]> {
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from('plans')
-    .select('id, code, display_name, price_cents, currency, monthly_generation_limit, platform_limit, speed_tier, has_history, has_api_access, has_team_access, has_batch_access, is_active, updated_at')
+    .select('id, code, display_name, price_cents, currency, monthly_generation_limit, platform_limit, speed_tier, has_history, has_api_access, has_team_access, has_batch_access, is_active, metadata, updated_at')
     .order('price_cents', { ascending: true });
 
   if (error) throw new Error(error.message);
@@ -41,6 +42,7 @@ export async function listPlans(): Promise<AdminPlanItem[]> {
     hasTeamAccess: r.has_team_access,
     hasBatchAccess: r.has_batch_access,
     isActive: r.is_active,
+    features: (r.metadata as Record<string, unknown>)?.features as string[] ?? [],
     updatedAt: r.updated_at,
   }));
 }
@@ -56,6 +58,7 @@ export interface UpdatePlanInput {
   hasTeamAccess?: boolean;
   hasBatchAccess?: boolean;
   isActive?: boolean;
+  features?: string[];
 }
 
 export async function updatePlan(
@@ -85,6 +88,11 @@ export async function updatePlan(
   if (input.hasTeamAccess !== undefined) updateData.has_team_access = input.hasTeamAccess;
   if (input.hasBatchAccess !== undefined) updateData.has_batch_access = input.hasBatchAccess;
   if (input.isActive !== undefined) updateData.is_active = input.isActive;
+  if (input.features !== undefined) {
+    // Merge features into existing metadata
+    const oldMeta = (old.metadata as Record<string, unknown>) ?? {};
+    updateData.metadata = { ...oldMeta, features: input.features };
+  }
 
   if (Object.keys(updateData).length === 0) throw new Error('没有需要更新的字段');
 
@@ -92,7 +100,7 @@ export async function updatePlan(
     .from('plans')
     .update(updateData)
     .eq('id', planId)
-    .select('id, code, display_name, price_cents, currency, monthly_generation_limit, platform_limit, speed_tier, has_history, has_api_access, has_team_access, has_batch_access, is_active, updated_at')
+    .select('id, code, display_name, price_cents, currency, monthly_generation_limit, platform_limit, speed_tier, has_history, has_api_access, has_team_access, has_batch_access, is_active, metadata, updated_at')
     .single();
 
   if (updErr) throw new Error(updErr.message);
@@ -124,6 +132,7 @@ export async function updatePlan(
     hasTeamAccess: updated.has_team_access,
     hasBatchAccess: updated.has_batch_access,
     isActive: updated.is_active,
+    features: (updated.metadata as Record<string, unknown>)?.features as string[] ?? [],
     updatedAt: updated.updated_at,
   };
 }

@@ -148,6 +148,7 @@ export interface PricingPlan {
   hasApiAccess: boolean;
   hasTeamAccess: boolean;
   hasBatchAccess: boolean;
+  features: string[];
 }
 
 // --- Usage data ---

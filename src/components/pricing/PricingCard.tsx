@@ -104,6 +104,9 @@ export default function PricingCard({ plan, isLoggedIn, currentPlanCode }: Props
         {plan.hasApiAccess && <li>🔑 API 访问</li>}
         {plan.hasTeamAccess && <li>👥 团队协作</li>}
         {plan.hasBatchAccess && <li>📦 批量处理</li>}
+        {plan.features.map((f, i) => (
+          <li key={i}>✨ {f}</li>
+        ))}
       </ul>
 
       {/* Error */}
