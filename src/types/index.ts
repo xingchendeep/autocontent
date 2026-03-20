@@ -126,7 +126,7 @@ export interface HistoryDetailResponse {
 
 export interface CheckoutResponseData {
   checkoutUrl: string;
-  provider: 'lemonsqueezy';
+  provider: 'creem';
 }
 
 export type SubscriptionStatus =

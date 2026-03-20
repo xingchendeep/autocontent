@@ -23,7 +23,7 @@ export default function SubscriptionPanel({ planCode, planDisplayName, subscript
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           planCode: targetPlanCode,
-          successUrl: `${window.location.origin}/dashboard/subscription?upgraded=1`,
+          successUrl: `${window.location.origin}/dashboard?upgraded=1`,
           cancelUrl: window.location.href,
         }),
       });
@@ -85,7 +85,7 @@ export default function SubscriptionPanel({ planCode, planDisplayName, subscript
             </Link>
           </div>
           <p className="text-xs text-zinc-400">
-            如需取消订阅，请通过 Lemon Squeezy 客户门户操作。
+            如需取消订阅，请通过 Creem.io 客户门户操作。
           </p>
         </div>
       )}

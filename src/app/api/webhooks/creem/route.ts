@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyWebhookSignature } from '@/lib/billing/lemon-squeezy';
+import { verifyWebhookSignature } from '@/lib/billing/creem';
 import { createServiceRoleClient } from '@/lib/db/client';
 import {
   ERROR_CODES,
@@ -9,51 +9,43 @@ import {
 } from '@/lib/errors';
 import { writeAuditLog } from '@/lib/db/audit-logger';
 
-// Subscription statuses that are considered terminal — no further active transitions allowed
 const TERMINAL_STATUSES = new Set(['cancelled', 'expired']);
-
-// Valid subscription statuses per schema CHECK constraint
 const VALID_STATUSES = new Set(['active', 'cancelled', 'expired', 'past_due', 'trialing', 'paused']);
 
-interface LemonWebhookPayload {
-  meta: {
-    event_name: string;
-    custom_data?: { user_id?: string };
+// Creem uses "canceled" (single l) — normalize to our DB schema "cancelled"
+function normalizeStatus(status: string): string {
+  return status === 'canceled' ? 'cancelled' : status;
+}
+
+interface CreemWebhookPayload {
+  eventType: string;
+  object: {
+    id: string;
+    status?: string;
+    product?: { id?: string };
+    customer?: { id?: string };
+    current_period_start_date?: string | null;
+    current_period_end_date?: string | null;
+    canceled_at?: string | null;
+    created_at?: string;
+    updated_at?: string;
   };
-  data: {
-    id: string; // event_id (Lemon Squeezy object ID)
-    attributes: {
-      // subscription fields
-      user_id?: number;
-      status?: string;
-      first_subscription_item?: { subscription_id?: number };
-      renews_at?: string | null;
-      ends_at?: string | null;
-      cancelled?: boolean;
-      // order fields
-      order_id?: number;
-      // shared
-      created_at?: string;
-      updated_at?: string;
-    };
-  };
+  metadata?: { userId?: string };
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const requestId = generateRequestId();
 
-  // 1. Read raw bytes — must happen before JSON.parse
   const rawBody = Buffer.from(await req.arrayBuffer());
-  const signature = req.headers.get('x-signature') ?? '';
-  const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET ?? '';
+  const signature = req.headers.get('creem-signature') ?? '';
+  const secret = process.env.CREEM_WEBHOOK_SECRET ?? '';
 
-  // 2. Verify signature before any parsing
   if (!verifyWebhookSignature(rawBody, signature, secret)) {
     void writeAuditLog({
       action: 'WEBHOOK_SIGNATURE_INVALID',
       userId: null,
       ipAddress: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
-      metadata: { provider: 'lemonsqueezy' },
+      metadata: { provider: 'creem' },
     });
     return NextResponse.json(
       createError(ERROR_CODES.WEBHOOK_SIGNATURE_INVALID, 'Invalid webhook signature', requestId),
@@ -61,10 +53,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // 3. Parse only after signature is verified
-  let event: LemonWebhookPayload;
+  let event: CreemWebhookPayload;
   try {
-    event = JSON.parse(rawBody.toString('utf-8')) as LemonWebhookPayload;
+    event = JSON.parse(rawBody.toString('utf-8')) as CreemWebhookPayload;
   } catch {
     return NextResponse.json(
       createError(ERROR_CODES.INVALID_INPUT, 'Invalid JSON payload', requestId),
@@ -72,21 +63,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const eventName = event.meta?.event_name ?? '';
-  const eventId = event.data?.id ?? '';
+  const eventType = event.eventType ?? '';
+  const eventId = event.object?.id ?? '';
   const db = createServiceRoleClient();
 
-  // 4. Idempotency — attempt to insert webhook_events row
+  // Idempotency
   const { error: insertError } = await db.from('webhook_events').insert({
-    provider: 'lemonsqueezy',
+    provider: 'creem',
     event_id: eventId,
-    event_name: eventName,
+    event_name: eventType,
     payload: event as unknown as Record<string, unknown>,
     processed_at: new Date().toISOString(),
   });
 
   if (insertError) {
-    // Unique constraint violation = duplicate event → idempotent 200
     if (insertError.code === '23505') {
       return NextResponse.json({ processed: true }, { status: 200 });
     }
@@ -96,36 +86,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // 5. Handle subscription lifecycle events
-  const attrs = event.data?.attributes ?? {};
-  const providerSubscriptionId = String(
-    attrs.first_subscription_item?.subscription_id ?? event.data?.id ?? '',
-  );
+  const obj = event.object;
+  const providerSubscriptionId = obj?.id ?? '';
+  const userId = event.metadata?.userId ?? null;
 
-  switch (eventName) {
-    case 'order_created':
-      // Record only — no subscription state change
+  switch (eventType) {
+    case 'checkout.completed': {
       void writeAuditLog({
         action: 'ORDER_CREATED',
-        userId: event.meta?.custom_data?.user_id ?? null,
+        userId,
         resourceType: 'order',
-        resourceId: String(attrs.order_id ?? event.data?.id ?? ''),
+        resourceId: providerSubscriptionId,
+        metadata: { provider: 'creem' },
       });
       break;
+    }
 
-    case 'subscription_created': {
-      const userId = event.meta?.custom_data?.user_id;
+    case 'subscription.active': {
       if (!userId) break;
 
-      // Resolve plan_id from plans table (default to free as fallback — real plan set via subscription_updated)
       const { data: freePlan } = await db
         .from('plans')
         .select('id')
         .eq('code', 'free')
         .single();
 
-      // Check if subscription already exists (partial unique index on provider_subscription_id
-      // prevents using PostgREST upsert with onConflict)
       const { data: existingSub } = await db
         .from('subscriptions')
         .select('id')
@@ -139,8 +124,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           .update({
             plan_id: freePlan?.id,
             status: 'active',
-            current_period_start: attrs.created_at ?? new Date().toISOString(),
-            current_period_end: attrs.renews_at ?? attrs.ends_at ?? null,
+            current_period_start: obj.current_period_start_date ?? new Date().toISOString(),
+            current_period_end: obj.current_period_end_date ?? null,
           })
           .eq('id', existingSub.id);
         subError = error;
@@ -148,11 +133,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const { error } = await db.from('subscriptions').insert({
           user_id: userId,
           plan_id: freePlan?.id,
-          provider: 'lemonsqueezy',
+          provider: 'creem',
           provider_subscription_id: providerSubscriptionId,
           status: 'active',
-          current_period_start: attrs.created_at ?? new Date().toISOString(),
-          current_period_end: attrs.renews_at ?? attrs.ends_at ?? null,
+          current_period_start: obj.current_period_start_date ?? new Date().toISOString(),
+          current_period_end: obj.current_period_end_date ?? null,
         });
         subError = error;
       }
@@ -168,13 +153,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         userId,
         resourceType: 'subscription',
         resourceId: providerSubscriptionId,
-        metadata: { planCode: 'free', provider: 'lemonsqueezy' },
+        metadata: { provider: 'creem' },
       });
       break;
     }
 
-    case 'subscription_updated': {
-      // Fetch current subscription to check terminal state
+    case 'subscription.update':
+    case 'subscription.paid': {
       const { data: existing } = await db
         .from('subscriptions')
         .select('id, status')
@@ -183,20 +168,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
       if (!existing) break;
 
-      // Do not allow expired → active transition
-      const newStatus = attrs.status ?? '';
+      const rawStatus = obj.status ?? '';
+      const newStatus = normalizeStatus(rawStatus);
+
       if (existing.status === 'expired' && newStatus === 'active') break;
-
-      // Skip if already in terminal state and incoming is same terminal
       if (TERMINAL_STATUSES.has(existing.status) && existing.status === newStatus) break;
-
       if (!VALID_STATUSES.has(newStatus)) break;
 
       const { error: updateErr } = await db
         .from('subscriptions')
         .update({
           status: newStatus,
-          current_period_end: attrs.renews_at ?? attrs.ends_at ?? null,
+          current_period_end: obj.current_period_end_date ?? null,
         })
         .eq('id', existing.id);
 
@@ -208,7 +191,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
       void writeAuditLog({
         action: 'SUBSCRIPTION_UPDATED',
-        userId: event.meta?.custom_data?.user_id ?? null,
+        userId,
         resourceType: 'subscription',
         resourceId: providerSubscriptionId,
         metadata: { previousStatus: existing.status, newStatus },
@@ -216,7 +199,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       break;
     }
 
-    case 'subscription_cancelled': {
+    case 'subscription.canceled':
+    case 'subscription.scheduled_cancel': {
       const { data: existing } = await db
         .from('subscriptions')
         .select('id, status')
@@ -224,7 +208,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         .maybeSingle();
 
       if (!existing) break;
-      // Already in terminal state with same event — no-op
       if (TERMINAL_STATUSES.has(existing.status) && existing.status === 'cancelled') break;
 
       const { error: cancelErr } = await db
@@ -240,23 +223,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
       void writeAuditLog({
         action: 'SUBSCRIPTION_CANCELLED',
-        userId: event.meta?.custom_data?.user_id ?? null,
+        userId,
         resourceType: 'subscription',
         resourceId: providerSubscriptionId,
       });
       break;
     }
 
-    case 'subscription_expired': {
+    case 'subscription.expired': {
       const { data: existing } = await db
         .from('subscriptions')
         .select('id, status')
         .eq('provider_subscription_id', providerSubscriptionId)
         .maybeSingle();
 
-      if (!existing) break;
-      // Already expired — no-op
-      if (existing.status === 'expired') break;
+      if (!existing || existing.status === 'expired') break;
 
       const { error: expireErr } = await db
         .from('subscriptions')
@@ -272,8 +253,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       break;
     }
 
+    case 'subscription.past_due': {
+      const { data: existing } = await db
+        .from('subscriptions')
+        .select('id, status')
+        .eq('provider_subscription_id', providerSubscriptionId)
+        .maybeSingle();
+
+      if (!existing) break;
+
+      await db
+        .from('subscriptions')
+        .update({ status: 'past_due' })
+        .eq('id', existing.id);
+      break;
+    }
+
+    case 'subscription.paused': {
+      const { data: existing } = await db
+        .from('subscriptions')
+        .select('id, status')
+        .eq('provider_subscription_id', providerSubscriptionId)
+        .maybeSingle();
+
+      if (!existing) break;
+
+      await db
+        .from('subscriptions')
+        .update({ status: 'paused' })
+        .eq('id', existing.id);
+      break;
+    }
+
     default:
-      // Unknown event type — recorded but no action
       break;
   }
 

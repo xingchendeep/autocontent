@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
-import { createCheckoutSession } from '@/lib/billing/lemon-squeezy';
+import { createCheckoutSession } from '@/lib/billing/creem';
 import {
   ERROR_CODES,
   ERROR_STATUS,
@@ -12,16 +12,15 @@ import {
 import { writeAuditLog } from '@/lib/db/audit-logger';
 import type { CheckoutResponseData } from '@/types';
 
-const VARIANT_MAP: Record<string, string | undefined> = {
-  creator:    process.env.LEMON_VARIANT_CREATOR,
-  studio:     process.env.LEMON_VARIANT_STUDIO,
-  enterprise: process.env.LEMON_VARIANT_ENTERPRISE,
+const PRODUCT_MAP: Record<string, string | undefined> = {
+  creator:    process.env.CREEM_PRODUCT_CREATOR,
+  studio:     process.env.CREEM_PRODUCT_STUDIO,
+  enterprise: process.env.CREEM_PRODUCT_ENTERPRISE,
 };
 
 const requestSchema = z.object({
   planCode:   z.enum(['creator', 'studio', 'enterprise']),
   successUrl: z.string().url(),
-  cancelUrl:  z.string().url(),
 });
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -57,25 +56,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { planCode, successUrl, cancelUrl } = parsed.data;
+  const { planCode, successUrl } = parsed.data;
 
-  // Resolve variant ID from env
-  const variantId = VARIANT_MAP[planCode];
-  if (!variantId) {
+  // Resolve product ID from env
+  const productId = PRODUCT_MAP[planCode];
+  if (!productId) {
     return NextResponse.json(
       createError(
         ERROR_CODES.SERVICE_UNAVAILABLE,
-        `Variant ID for plan "${planCode}" is not configured`,
+        `Product ID for plan "${planCode}" is not configured`,
         requestId,
       ),
       { status: ERROR_STATUS.SERVICE_UNAVAILABLE, headers: { 'x-request-id': requestId } },
     );
   }
 
-  // Call Lemon Squeezy
+  // Call Creem
   let checkoutUrl: string;
   try {
-    checkoutUrl = await createCheckoutSession(variantId, session.id, successUrl, cancelUrl);
+    checkoutUrl = await createCheckoutSession(productId, session.id, successUrl);
   } catch {
     const errResponse = createError(
       ERROR_CODES.SERVICE_UNAVAILABLE,
@@ -93,7 +92,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   }
 
-  const data: CheckoutResponseData = { checkoutUrl, provider: 'lemonsqueezy' };
+  const data: CheckoutResponseData = { checkoutUrl, provider: 'creem' };
   return NextResponse.json(
     createSuccess(data, requestId),
     { status: 200, headers: { 'x-request-id': requestId } },

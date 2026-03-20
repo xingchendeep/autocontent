@@ -13,7 +13,7 @@
 ## Planned Integrations (by milestone)
 - **AI**: DashScope / Tongyi Qianwen (primary), with adapter layer for multi-model fallback
 - **Auth & DB**: Supabase (Auth + Postgres + RLS)
-- **Payments**: Lemon Squeezy
+- **Payments**: Creem.io (Merchant of Record)
 - **Rate limiting**: Upstash Redis
 - **Email**: Resend
 - **Deployment**: Vercel
@@ -44,8 +44,11 @@ SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 UPSTASH_REDIS_REST_URL=
 UPSTASH_REDIS_REST_TOKEN=
-LEMONSQUEEZY_API_KEY=
-LEMONSQUEEZY_WEBHOOK_SECRET=
+CREEM_API_KEY=
+CREEM_WEBHOOK_SECRET=
+CREEM_PRODUCT_CREATOR=
+CREEM_PRODUCT_STUDIO=
+CREEM_PRODUCT_ENTERPRISE=
 ```
 
 ## Code Conventions
