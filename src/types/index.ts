@@ -144,6 +144,10 @@ export interface PricingPlan {
   monthlyGenerationLimit: number | null;
   platformLimit: number | null;
   speedTier: 'standard' | 'fast' | 'priority' | 'dedicated';
+  hasHistory: boolean;
+  hasApiAccess: boolean;
+  hasTeamAccess: boolean;
+  hasBatchAccess: boolean;
 }
 
 // --- Usage data ---

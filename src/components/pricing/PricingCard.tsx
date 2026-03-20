@@ -88,7 +88,7 @@ export default function PricingCard({ plan, isLoggedIn, currentPlanCode }: Props
       {/* Price */}
       <p className="mb-4 text-2xl font-bold">{formatPrice(plan.priceMonthly)}</p>
 
-      {/* Limits */}
+      {/* Limits & features */}
       <ul className={`mb-6 flex-1 space-y-1 text-sm ${isCurrent ? 'text-zinc-300' : 'text-zinc-600'}`}>
         <li>
           {plan.monthlyGenerationLimit != null
@@ -100,6 +100,10 @@ export default function PricingCard({ plan, isLoggedIn, currentPlanCode }: Props
             ? `最多 ${plan.platformLimit} 个平台`
             : '全部平台'}
         </li>
+        {plan.hasHistory && <li>☁️ 云端历史记录</li>}
+        {plan.hasApiAccess && <li>🔑 API 访问</li>}
+        {plan.hasTeamAccess && <li>👥 团队协作</li>}
+        {plan.hasBatchAccess && <li>📦 批量处理</li>}
       </ul>
 
       {/* Error */}
