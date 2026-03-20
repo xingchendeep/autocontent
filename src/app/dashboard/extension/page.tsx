@@ -5,6 +5,21 @@ export default function ExtensionPage() {
     <div className="mx-auto max-w-3xl px-4 py-8">
       <h1 className="mb-6 text-lg font-semibold text-zinc-900">浏览器插件</h1>
 
+      {/* Download */}
+      <section className="mb-8 rounded-lg border border-zinc-200 bg-white p-6">
+        <h2 className="mb-3 text-sm font-semibold text-zinc-900">下载插件</h2>
+        <p className="mb-4 text-sm text-zinc-600">
+          支持 Chrome、Edge 及所有 Chromium 内核浏览器。下载后解压即可手动安装。
+        </p>
+        <a
+          href="/autocontent-pro-extension.zip"
+          download
+          className="inline-block rounded-md bg-zinc-900 px-6 py-2 text-sm text-white hover:bg-zinc-800"
+        >
+          下载插件压缩包
+        </a>
+      </section>
+
       <section className="mb-8 rounded-lg border border-zinc-200 bg-white p-6">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900">功能介绍</h2>
         <ul className="space-y-2 text-sm text-zinc-600">
@@ -17,12 +32,21 @@ export default function ExtensionPage() {
 
       <section className="mb-8 rounded-lg border border-zinc-200 bg-white p-6">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900">安装指引</h2>
-        <ol className="space-y-2 text-sm text-zinc-600 list-decimal list-inside">
-          <li>下载插件压缩包并解压到本地目录</li>
-          <li>打开 Chrome 浏览器，进入 <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs">chrome://extensions</code></li>
+
+        <h3 className="mb-2 text-xs font-medium text-zinc-500">Chrome</h3>
+        <ol className="mb-4 space-y-1.5 text-sm text-zinc-600 list-decimal list-inside">
+          <li>下载并解压上方的插件压缩包</li>
+          <li>打开 <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs">chrome://extensions</code></li>
           <li>开启右上角「开发者模式」</li>
           <li>点击「加载已解压的扩展程序」，选择解压后的目录</li>
-          <li>插件图标出现在浏览器工具栏即安装成功</li>
+        </ol>
+
+        <h3 className="mb-2 text-xs font-medium text-zinc-500">Edge</h3>
+        <ol className="space-y-1.5 text-sm text-zinc-600 list-decimal list-inside">
+          <li>下载并解压上方的插件压缩包</li>
+          <li>打开 <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs">edge://extensions</code></li>
+          <li>开启左下角「开发人员模式」</li>
+          <li>点击「加载解压缩的扩展」，选择解压后的目录</li>
         </ol>
       </section>
 

@@ -72,7 +72,7 @@ export function TeamPanel() {
       {error === 'PLAN_LIMIT_REACHED' && (
         <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           当前套餐不支持团队功能。
-          <Link href="/dashboard/subscription" className="ml-1 text-blue-600 hover:underline">升级套餐</Link>
+          <Link href="/dashboard" className="ml-1 text-blue-600 hover:underline">升级套餐</Link>
         </div>
       )}
 

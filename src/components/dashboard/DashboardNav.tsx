@@ -12,7 +12,6 @@ const NAV_ITEMS = [
   { href: '/dashboard/teams', label: '团队' },
   { href: '/dashboard/api-keys', label: 'API Keys' },
   { href: '/dashboard/extension', label: '插件' },
-  { href: '/dashboard/subscription', label: '订阅' },
 ];
 
 export function DashboardNav() {

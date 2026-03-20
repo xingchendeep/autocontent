@@ -8,6 +8,16 @@ import { createSupabaseMiddlewareClient } from '@/lib/auth/middleware-client';
  * Protects /dashboard/* and redirects authenticated users away from /login, /register, /forgot-password.
  */
 export async function middleware(request: NextRequest) {
+  const { pathname, searchParams } = request.nextUrl;
+
+  // Fallback: redirect /?code=... to /auth/callback?code=...
+  // Handles Supabase Magic Link emails that point to the root URL instead of /auth/callback
+  if (pathname === '/' && searchParams.has('code')) {
+    const callbackUrl = new URL('/auth/callback', request.url);
+    callbackUrl.search = request.nextUrl.search;
+    return NextResponse.redirect(callbackUrl);
+  }
+
   const response = NextResponse.next({ request });
   const supabase = createSupabaseMiddlewareClient(request, response);
 
@@ -17,7 +27,6 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
 
-  const { pathname } = request.nextUrl;
 
   if ((pathname.startsWith('/dashboard') || pathname.startsWith('/admin')) && !user) {
     return NextResponse.redirect(new URL('/login', request.url));
@@ -31,5 +40,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/admin/:path*', '/login', '/register', '/forgot-password'],
+  matcher: ['/', '/dashboard/:path*', '/admin/:path*', '/login', '/register', '/forgot-password'],
 };
