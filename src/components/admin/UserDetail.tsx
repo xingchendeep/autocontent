@@ -246,9 +246,9 @@ export function UserDetail({ userId }: { userId: string }) {
             >
               <option value="">修改订阅…</option>
               <option value="free">Free</option>
-              <option value="starter">Starter</option>
-              <option value="pro">Pro</option>
-              <option value="team">Team</option>
+              <option value="creator">Creator</option>
+              <option value="studio">Studio</option>
+              <option value="enterprise">Enterprise</option>
             </select>
           </div>
         </div>
