@@ -1,54 +1,24 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/auth/server';
-import { upsertProfile } from '@/lib/auth';
-import { generateRequestId } from '@/lib/errors';
-import { writeAuditLog } from '@/lib/db/audit-logger';
 
 /**
- * GET /auth/callback?code=...
- * Exchanges the PKCE code for a session, upserts the user profile,
- * then redirects to /dashboard. On any error, redirects to /login?error=...
+ * Handles Supabase Auth callback (Magic Link / OAuth PKCE flow).
+ * Exchanges the `code` param for a session, then redirects to dashboard.
+ * On failure, redirects to /login?error=auth_failed.
  */
-export async function GET(request: NextRequest): Promise<NextResponse> {
-  const requestId = generateRequestId();
-  const { searchParams, origin } = new URL(request.url);
+export async function GET(request: NextRequest) {
+  const { searchParams, origin } = request.nextUrl;
   const code = searchParams.get('code');
+  const next = searchParams.get('next') ?? '/dashboard';
 
-  if (!code) {
-    return NextResponse.redirect(
-      new URL('/login?error=invalid_link', origin),
-    );
+  if (code) {
+    const supabase = await createSupabaseServerClient();
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    if (!error) {
+      return NextResponse.redirect(new URL(next, origin));
+    }
+    console.error('[auth/callback] exchangeCodeForSession error:', error.message);
   }
 
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-
-  if (error || !data.user) {
-    console.error(`[${requestId}] exchangeCodeForSession error:`, error?.message);
-    // Fire-and-forget audit for failed sign-in
-    void writeAuditLog({
-      action: 'USER_SIGN_IN_FAILED',
-      userId: null,
-      ipAddress: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
-      userAgent: request.headers.get('user-agent') ?? null,
-      metadata: { reason: error?.message ?? 'auth_failed' },
-    });
-    return NextResponse.redirect(
-      new URL('/login?error=auth_failed', origin),
-    );
-  }
-
-  // Non-blocking — failure is logged but never prevents reaching /dashboard
-  await upsertProfile(data.user.id, requestId);
-
-  // Fire-and-forget audit for successful sign-in
-  void writeAuditLog({
-    action: 'USER_SIGN_IN',
-    userId: data.user.id,
-    ipAddress: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
-    userAgent: request.headers.get('user-agent') ?? null,
-  });
-
-  return NextResponse.redirect(new URL('/dashboard', origin));
+  return NextResponse.redirect(new URL('/login?error=auth_failed', origin));
 }
