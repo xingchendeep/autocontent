@@ -56,29 +56,38 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
     }
   }
 
-  // ── 抖音：解析短链/分享链获取 awemeId，然后交给服务端 ASR ──
-  async function extractDouyin(videoUrl: string): Promise<{ awemeId: string } | null> {
+  // ── 抖音：解析短链/分享链获取 awemeId + CDN URL，然后交给服务端 ASR ──
+  async function extractDouyin(videoUrl: string): Promise<{ awemeId: string; videoDirectUrl?: string } | null> {
     try {
       // 先尝试直接从 URL 提取 awemeId
       const videoMatch = videoUrl.match(/\/video\/(\d{15,})/);
       const modalMatch = videoUrl.match(/modal_id=(\d{15,})/);
       const directId = videoMatch?.[1] ?? modalMatch?.[1];
-      if (directId) return { awemeId: directId };
 
-      // 短链/分享链：调服务端解析（服务端跟随重定向提取 awemeId）
+      // 如果能直接提取 awemeId，也调服务端获取 CDN URL
+      // 如果是短链，服务端会同时解析 awemeId + CDN URL
       setMessage('正在解析抖音链接...');
       const res = await fetch('/api/extract/resolve-douyin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ videoUrl }),
       });
-      if (!res.ok) return null;
-      const json = await res.json() as { success?: boolean; data?: { awemeId: string } };
-      if (json.success && json.data?.awemeId) {
-        return { awemeId: json.data.awemeId };
+      if (res.ok) {
+        const json = await res.json() as { success?: boolean; data?: { awemeId: string; videoDirectUrl?: string } };
+        if (json.success && json.data?.awemeId) {
+          return { awemeId: json.data.awemeId, videoDirectUrl: json.data.videoDirectUrl ?? undefined };
+        }
       }
+
+      // 服务端解析失败，但如果有直接提取的 awemeId 就用它
+      if (directId) return { awemeId: directId };
       return null;
     } catch {
+      // 网络错误时 fallback 到直接提取
+      const videoMatch = videoUrl.match(/\/video\/(\d{15,})/);
+      const modalMatch = videoUrl.match(/modal_id=(\d{15,})/);
+      const directId = videoMatch?.[1] ?? modalMatch?.[1];
+      if (directId) return { awemeId: directId };
       return null;
     }
   }
@@ -105,13 +114,19 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
         setMessage('该视频无字幕，尝试语音识别...');
       }
 
-      // ── 抖音：提取 awemeId（支持短链/分享链），传给服务端 ──
+      // ── 抖音：提取 awemeId + CDN URL，传给服务端 ──
       let extraBody: Record<string, string> = {};
       if (host.includes('douyin.com') || host.includes('iesdouyin.com')) {
         const dy = await extractDouyin(videoUrl);
         if (dy?.awemeId) {
           extraBody = { awemeId: dy.awemeId };
-          setMessage(`已获取视频 ID（${dy.awemeId}），正在提交语音识别...`);
+          if (dy.videoDirectUrl) {
+            // 把 CDN URL 作为 audioUrl 传给后端，后端直接用它提交 ASR，跳过代理下载
+            extraBody.audioUrl = dy.videoDirectUrl;
+            setMessage(`已获取视频地址，正在提交语音识别...`);
+          } else {
+            setMessage(`已获取视频 ID（${dy.awemeId}），正在提交语音识别...`);
+          }
         } else {
           setStatus('error');
           setMessage('无法从该抖音链接解析出视频 ID，请尝试使用完整的视频页面链接');
