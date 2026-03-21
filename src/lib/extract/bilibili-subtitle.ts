@@ -50,10 +50,10 @@ export async function extractBilibiliSubtitle(videoUrl: string): Promise<Extract
   }
 
   try {
-    // 获取视频信息（含字幕列表）
+    // Step 1: 获取 cid 和 aid（如果只有 bvid）
     const params = bvid ? `bvid=${bvid}` : `aid=${aid}`;
-    const infoRes = await fetch(
-      `https://api.bilibili.com/x/player/v2?${params}&cid=0`,
+    const viewRes = await fetch(
+      `https://api.bilibili.com/x/web-interface/view?${params}`,
       {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -62,30 +62,46 @@ export async function extractBilibiliSubtitle(videoUrl: string): Promise<Extract
       },
     );
 
-    if (!infoRes.ok) {
-      logger.warn('bilibili-subtitle: player API failed', { status: infoRes.status });
+    if (!viewRes.ok) {
+      logger.warn('bilibili-subtitle: view API failed', { status: viewRes.status });
       return null;
     }
 
-    const infoJson = (await infoRes.json()) as { code: number; data?: BiliPlayerInfo };
-    if (infoJson.code !== 0 || !infoJson.data?.subtitle?.subtitles?.length) {
-      // 需要先获取 cid
-      const cidRes = await fetch(
-        `https://api.bilibili.com/x/web-interface/view?${params}`,
-        {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            Referer: 'https://www.bilibili.com',
-          },
+    const viewJson = (await viewRes.json()) as { code: number; data?: { aid?: number; cid?: number } };
+    if (viewJson.code !== 0 || !viewJson.data?.cid) {
+      logger.warn('bilibili-subtitle: view API returned no cid', { code: viewJson.code });
+      return null;
+    }
+
+    const resolvedAid = viewJson.data.aid;
+    const cid = viewJson.data.cid;
+
+    // Step 2: 用 dm/view 接口获取字幕列表（不需要 cookie，支持 AI 生成字幕）
+    const dmRes = await fetch(
+      `https://api.bilibili.com/x/v2/dm/view?type=1&oid=${cid}&pid=${resolvedAid}`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          Referer: 'https://www.bilibili.com',
         },
-      );
-      if (!cidRes.ok) return null;
+      },
+    );
 
-      const cidJson = (await cidRes.json()) as { code: number; data?: { cid?: number } };
-      if (cidJson.code !== 0 || !cidJson.data?.cid) return null;
+    if (!dmRes.ok) {
+      logger.warn('bilibili-subtitle: dm/view API failed', { status: dmRes.status });
+      return null;
+    }
 
-      const cid = cidJson.data.cid;
-      const retryRes = await fetch(
+    const dmJson = (await dmRes.json()) as {
+      code: number;
+      data?: { subtitle?: { subtitles?: Array<{ subtitle_url: string; lan: string; lan_doc: string }> } };
+    };
+
+    if (dmJson.code !== 0 || !dmJson.data?.subtitle?.subtitles?.length) {
+      logger.info('bilibili-subtitle: no subtitles available via dm/view', { videoUrl });
+
+      // Fallback: 尝试 player/v2 接口（某些视频可能只在这个接口有字幕）
+      const playerRes = await fetch(
         `https://api.bilibili.com/x/player/v2?${params}&cid=${cid}`,
         {
           headers: {
@@ -94,23 +110,23 @@ export async function extractBilibiliSubtitle(videoUrl: string): Promise<Extract
           },
         },
       );
-      if (!retryRes.ok) return null;
-
-      const retryJson = (await retryRes.json()) as { code: number; data?: BiliPlayerInfo };
-      if (retryJson.code !== 0 || !retryJson.data?.subtitle?.subtitles?.length) {
-        logger.info('bilibili-subtitle: no subtitles available', { videoUrl });
-        return null;
+      if (playerRes.ok) {
+        const playerJson = (await playerRes.json()) as { code: number; data?: BiliPlayerInfo };
+        if (playerJson.code === 0 && playerJson.data?.subtitle?.subtitles?.length) {
+          return await fetchSubtitleContent(playerJson.data.subtitle.subtitles);
+        }
       }
 
-      return await fetchSubtitleContent(retryJson.data.subtitle.subtitles);
+      return null;
     }
 
-    return await fetchSubtitleContent(infoJson.data.subtitle.subtitles);
+    return await fetchSubtitleContent(dmJson.data.subtitle.subtitles);
   } catch (err) {
     logger.error('bilibili-subtitle: extraction failed', { videoUrl, error: String(err) });
     return null;
   }
 }
+
 
 async function fetchSubtitleContent(
   subtitles: Array<{ subtitle_url: string; lan: string; lan_doc: string }>,
