@@ -72,6 +72,72 @@ export async function GET(req: NextRequest, ctx: RouteContext): Promise<NextResp
     );
   }
 
+  const isStaleProcessing = row.status === 'processing'
+    && Date.now() - new Date(row.updated_at).getTime() > 60_000;
+
+  if (row.status === 'pending' || (row.platform === 'upload' && isStaleProcessing)) {
+    await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
+
+    try {
+      let result: {
+        text: string;
+        method: string;
+        durationSeconds?: number;
+        language?: string;
+      };
+
+      if (row.platform === 'upload') {
+        const { transcribeAudio } = await import('@/lib/extract/asr-service');
+        result = await transcribeAudio(row.video_url);
+      } else {
+        const { extractVideoScript } = await import('@/lib/extract');
+        let awemeId: string | undefined;
+
+        if (row.platform === 'douyin') {
+          const videoMatch = row.video_url.match(/\/video\/(\d+)/);
+          const modalMatch = row.video_url.match(/modal_id=(\d+)/);
+          awemeId = videoMatch?.[1] ?? modalMatch?.[1] ?? undefined;
+        }
+
+        result = await extractVideoScript(row.video_url, undefined, awemeId);
+      }
+
+      await db.from('extraction_jobs').update({
+        status: 'completed',
+        method: result.method,
+        result_text: result.text,
+        duration_seconds: result.durationSeconds ?? null,
+        language: result.language ?? null,
+      }).eq('id', jobId);
+
+      return NextResponse.json(createSuccess({
+        jobId: row.id, status: 'completed', platform: row.platform,
+        videoUrl: row.video_url, createdAt: row.created_at, updatedAt: new Date().toISOString(),
+        result: {
+          text: result.text, method: result.method,
+          durationSeconds: result.durationSeconds, language: result.language,
+        },
+      }, requestId), {
+        status: 200, headers: { 'x-request-id': requestId },
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+
+      await db.from('extraction_jobs').update({
+        status: 'failed',
+        error_message: errorMessage,
+      }).eq('id', jobId);
+
+      return NextResponse.json(createSuccess({
+        jobId: row.id, status: 'failed', platform: row.platform,
+        videoUrl: row.video_url, createdAt: row.created_at, updatedAt: new Date().toISOString(),
+        error: errorMessage,
+      }, requestId), {
+        status: 200, headers: { 'x-request-id': requestId },
+      });
+    }
+  }
+
   // Build response based on status
   const responseData: Record<string, unknown> = {
     jobId: row.id, status: row.status, platform: row.platform,
