@@ -123,7 +123,7 @@ export async function extractVideoScript(
  * 服务端自动解析视频直链
  * 当网站端只传了页面 URL 没有 audioUrl 时，尝试从页面解析出视频直链
  */
-async function resolveVideoUrl(
+export async function resolveVideoUrl(
   pageUrl: string,
   platform: string,
   awemeId?: string,

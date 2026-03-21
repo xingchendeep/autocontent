@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { verifyApiKey } from '@/lib/api-keys';
 import { createServiceRoleClient } from '@/lib/db/client';
+import { logger } from '@/lib/logger';
 import {
   ERROR_CODES,
   ERROR_STATUS,
@@ -16,7 +17,9 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 /**
  * GET /api/extract/:id
- * 查询视频脚本提取任务状态（纯查询，不做处理）
+ * 查询视频脚本提取任务状态
+ * - 如果 status=processing 且有 asr_task_id，检查一次 ASR 任务状态
+ * - 如果 ASR 完成，更新 DB 并返回结果
  */
 export async function GET(req: NextRequest, ctx: RouteContext): Promise<NextResponse> {
   const requestId = generateRequestId();
@@ -42,7 +45,7 @@ export async function GET(req: NextRequest, ctx: RouteContext): Promise<NextResp
 
   const { data: job, error } = await db
     .from('extraction_jobs')
-    .select('id, user_id, video_url, platform, status, method, result_text, duration_seconds, language, error_message, created_at, updated_at')
+    .select('id, user_id, video_url, platform, status, method, result_text, duration_seconds, language, error_message, asr_task_id, created_at, updated_at')
     .eq('id', jobId)
     .maybeSingle();
 
@@ -64,6 +67,7 @@ export async function GET(req: NextRequest, ctx: RouteContext): Promise<NextResp
     platform: string; status: string; method: string | null;
     result_text: string | null; duration_seconds: number | null;
     language: string | null; error_message: string | null;
+    asr_task_id: string | null;
     created_at: string; updated_at: string;
   };
 
@@ -74,55 +78,71 @@ export async function GET(req: NextRequest, ctx: RouteContext): Promise<NextResp
     );
   }
 
-  // 仅对 upload 类型做 sync fallback（upload 没有 /api/extract/process 异步处理）
-  // 非 upload 类型（bilibili、douyin 等）由 /api/extract/process 异步处理，GET 只做纯查询
-  const isUploadStale = row.platform === 'upload'
-    && (row.status === 'pending' || (row.status === 'processing' && Date.now() - new Date(row.updated_at).getTime() > 60_000));
-
-  if (isUploadStale) {
-    await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
-
+  // 如果 status=processing 且有 asr_task_id，检查 ASR 任务状态
+  if (row.status === 'processing' && row.asr_task_id) {
     try {
-      const { transcribeAudio } = await import('@/lib/extract/asr-service');
-      const result = await transcribeAudio(row.video_url);
+      const asrResult = await checkAsrTaskStatus(row.asr_task_id);
 
-      await db.from('extraction_jobs').update({
-        status: 'completed',
-        method: result.method,
-        result_text: result.text,
-        duration_seconds: result.durationSeconds ?? null,
-        language: result.language ?? null,
-      }).eq('id', jobId);
+      if (asrResult.status === 'completed' && asrResult.text) {
+        await db.from('extraction_jobs').update({
+          status: 'completed',
+          method: 'asr',
+          result_text: asrResult.text,
+          duration_seconds: asrResult.durationSeconds ?? null,
+          language: asrResult.language ?? null,
+        }).eq('id', jobId);
 
-      return NextResponse.json(createSuccess({
-        jobId: row.id, status: 'completed', platform: row.platform,
-        videoUrl: row.video_url, createdAt: row.created_at, updatedAt: new Date().toISOString(),
-        result: {
-          text: result.text, method: result.method,
-          durationSeconds: result.durationSeconds, language: result.language,
-        },
-      }, requestId), {
-        status: 200, headers: { 'x-request-id': requestId },
-      });
+        return NextResponse.json(createSuccess({
+          jobId: row.id, status: 'completed', platform: row.platform,
+          videoUrl: row.video_url, createdAt: row.created_at, updatedAt: new Date().toISOString(),
+          result: {
+            text: asrResult.text, method: 'asr',
+            durationSeconds: asrResult.durationSeconds, language: asrResult.language,
+          },
+        }, requestId), {
+          status: 200, headers: { 'x-request-id': requestId },
+        });
+      }
+
+      if (asrResult.status === 'failed') {
+        await db.from('extraction_jobs').update({
+          status: 'failed',
+          error_message: asrResult.error ?? 'ASR 转写失败',
+        }).eq('id', jobId);
+
+        return NextResponse.json(createSuccess({
+          jobId: row.id, status: 'failed', platform: row.platform,
+          videoUrl: row.video_url, createdAt: row.created_at, updatedAt: new Date().toISOString(),
+          error: asrResult.error ?? 'ASR 转写失败',
+        }, requestId), {
+          status: 200, headers: { 'x-request-id': requestId },
+        });
+      }
+
+      // still processing — fall through to return current status
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-
-      await db.from('extraction_jobs').update({
-        status: 'failed',
-        error_message: errorMessage,
-      }).eq('id', jobId);
-
-      return NextResponse.json(createSuccess({
-        jobId: row.id, status: 'failed', platform: row.platform,
-        videoUrl: row.video_url, createdAt: row.created_at, updatedAt: new Date().toISOString(),
-        error: errorMessage,
-      }, requestId), {
-        status: 200, headers: { 'x-request-id': requestId },
-      });
+      logger.warn('extract/[id]: ASR status check failed', { jobId, error: String(err) });
+      // Don't fail the request, just return current status
     }
   }
 
-  // Build response based on status
+  // 超时检测：processing 超过 5 分钟视为失败
+  if (row.status === 'processing' && Date.now() - new Date(row.updated_at).getTime() > 5 * 60_000) {
+    await db.from('extraction_jobs').update({
+      status: 'failed',
+      error_message: '提取超时，请重试',
+    }).eq('id', jobId);
+
+    return NextResponse.json(createSuccess({
+      jobId: row.id, status: 'failed', platform: row.platform,
+      videoUrl: row.video_url, createdAt: row.created_at, updatedAt: new Date().toISOString(),
+      error: '提取超时，请重试',
+    }, requestId), {
+      status: 200, headers: { 'x-request-id': requestId },
+    });
+  }
+
+  // Build response based on current status
   const responseData: Record<string, unknown> = {
     jobId: row.id, status: row.status, platform: row.platform,
     videoUrl: row.video_url, createdAt: row.created_at, updatedAt: row.updated_at,
@@ -140,4 +160,94 @@ export async function GET(req: NextRequest, ctx: RouteContext): Promise<NextResp
   return NextResponse.json(createSuccess(responseData, requestId), {
     status: 200, headers: { 'x-request-id': requestId },
   });
+}
+
+
+/**
+ * 检查 DashScope ASR 任务状态（单次查询，不轮询）
+ */
+async function checkAsrTaskStatus(taskId: string): Promise<{
+  status: 'processing' | 'completed' | 'failed';
+  text?: string;
+  durationSeconds?: number;
+  language?: string;
+  error?: string;
+}> {
+  const apiKey = process.env.DASHSCOPE_API_KEY;
+  if (!apiKey) throw new Error('DASHSCOPE_API_KEY not configured');
+
+  const res = await fetch(`https://dashscope.aliyuncs.com/api/v1/tasks/${taskId}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+
+  if (!res.ok) {
+    throw new Error(`ASR task query failed: ${res.status}`);
+  }
+
+  const json = (await res.json()) as {
+    output?: {
+      task_id: string;
+      task_status: 'SUCCEEDED' | 'FAILED' | 'PENDING' | 'RUNNING';
+      results?: Array<{
+        transcription_url?: string;
+        subtask_status: string;
+        code?: string;
+        message?: string;
+      }>;
+    };
+  };
+
+  const taskStatus = json.output?.task_status;
+
+  if (taskStatus === 'SUCCEEDED') {
+    const results = json.output?.results;
+    if (!results?.length) {
+      return { status: 'failed', error: 'ASR 返回空结果' };
+    }
+
+    const subtask = results[0];
+    if (subtask.subtask_status === 'FAILED') {
+      return { status: 'failed', error: subtask.message ?? subtask.code ?? 'ASR 子任务失败' };
+    }
+
+    if (!subtask.transcription_url) {
+      return { status: 'failed', error: 'ASR 无转写结果 URL' };
+    }
+
+    // 下载转写结果
+    const transRes = await fetch(subtask.transcription_url);
+    if (!transRes.ok) {
+      return { status: 'failed', error: `下载转写结果失败: ${transRes.status}` };
+    }
+
+    const transJson = (await transRes.json()) as {
+      transcripts?: Array<{
+        text: string;
+        content_duration_in_milliseconds?: number;
+      }>;
+    };
+
+    const text = transJson.transcripts
+      ?.map((t) => t.text)
+      .filter(Boolean)
+      .join('\n') ?? '';
+
+    if (!text) {
+      return { status: 'failed', error: 'ASR 转写结果为空' };
+    }
+
+    const durationMs = transJson.transcripts?.[0]?.content_duration_in_milliseconds;
+    const durationSeconds = durationMs ? Math.ceil(durationMs / 1000) : undefined;
+
+    return { status: 'completed', text, durationSeconds, language: 'zh' };
+  }
+
+  if (taskStatus === 'FAILED') {
+    const failMsg = json.output?.results?.[0]?.message ?? json.output?.results?.[0]?.code ?? '未知错误';
+    return { status: 'failed', error: `ASR 失败: ${failMsg}` };
+  }
+
+  // PENDING or RUNNING
+  return { status: 'processing' };
 }

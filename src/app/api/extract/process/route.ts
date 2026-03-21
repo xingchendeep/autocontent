@@ -10,17 +10,17 @@ interface ProcessPayload {
   audioUrl?: string | null;
   platform: string;
   awemeId?: string | null;
-  // Upload-specific fields
   storagePath?: string;
 }
 
 /**
  * POST /api/extract/process
- * Called by QStash to process extraction jobs asynchronously.
- * Verifies QStash signature for security.
+ * 异步处理提取任务：
+ * - B站字幕提取：同步完成
+ * - ASR：解析视频 URL → 代理下载 → 上传 DashScope OSS → 提交 ASR 任务 → 保存 task_id
+ *   ASR 结果轮询由 GET /api/extract/[id] 在前端 poll 时逐步检查
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  // Verify QStash signature
   const signingKey = process.env.QSTASH_CURRENT_SIGNING_KEY;
   const upstashSignature = req.headers.get('upstash-signature');
 
@@ -29,7 +29,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Parse payload
   let payload: ProcessPayload;
   try {
     payload = await req.json() as ProcessPayload;
@@ -44,7 +43,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const db = createServiceRoleClient();
 
-  // Check job still exists and is pending
   const { data: job } = await db
     .from('extraction_jobs')
     .select('status')
@@ -58,33 +56,60 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
 
   try {
-    let result: { text: string; method: string; durationSeconds?: number; language?: string };
-
+    // Upload 类型：直接提交 ASR（video_url 已经是 Supabase Storage 直链）
     if (platform === 'upload') {
-      // Upload: video_url is already the direct file URL
-      const { transcribeAudio } = await import('@/lib/extract/asr-service');
-      result = await transcribeAudio(videoUrl);
-    } else {
-      const { extractVideoScript } = await import('@/lib/extract');
-      // Use awemeId from payload (browser extension) or extract from URL
-      let resolvedAwemeId: string | undefined = awemeId ?? undefined;
-      if (!resolvedAwemeId && platform === 'douyin') {
-        const videoMatch = videoUrl.match(/\/video\/(\d+)/);
-        const modalMatch = videoUrl.match(/modal_id=(\d+)/);
-        resolvedAwemeId = videoMatch?.[1] ?? modalMatch?.[1] ?? undefined;
-      }
-      result = await extractVideoScript(videoUrl, audioUrl ?? undefined, resolvedAwemeId);
+      const { submitTranscriptionTask } = await import('@/lib/extract/asr-service');
+      const taskId = await submitTranscriptionTask(videoUrl);
+      await db.from('extraction_jobs').update({ asr_task_id: taskId }).eq('id', jobId);
+      logger.info('extract/process: upload ASR submitted', { jobId, taskId });
+      return NextResponse.json({ ok: true });
     }
 
-    await db.from('extraction_jobs').update({
-      status: 'completed',
-      method: result.method,
-      result_text: result.text,
-      duration_seconds: result.durationSeconds ?? null,
-      language: result.language ?? null,
-    }).eq('id', jobId);
+    // B站：先尝试字幕 API（同步完成）
+    if (platform === 'bilibili') {
+      const { extractBilibiliSubtitle } = await import('@/lib/extract/bilibili-subtitle');
+      const subtitleResult = await extractBilibiliSubtitle(videoUrl);
+      if (subtitleResult) {
+        await db.from('extraction_jobs').update({
+          status: 'completed',
+          method: subtitleResult.method,
+          result_text: subtitleResult.text,
+          duration_seconds: subtitleResult.durationSeconds ?? null,
+          language: subtitleResult.language ?? null,
+        }).eq('id', jobId);
+        logger.info('extract/process: bilibili subtitle done', { jobId });
+        return NextResponse.json({ ok: true });
+      }
+      logger.info('extract/process: bilibili no subtitle, fallback ASR', { jobId });
+    }
 
-    logger.info('extract/process: completed', { jobId, platform, method: result.method });
+    // ASR 流程：解析视频直链 → 代理下载 → 上传 OSS → 提交 ASR（不轮询）
+    let mediaUrl = audioUrl ?? undefined;
+
+    if (!mediaUrl) {
+      const { resolveVideoUrl } = await import('@/lib/extract');
+      const resolvedAwemeId = awemeId
+        ?? videoUrl.match(/\/video\/(\d+)/)?.[1]
+        ?? videoUrl.match(/modal_id=(\d+)/)?.[1]
+        ?? undefined;
+      mediaUrl = (await resolveVideoUrl(videoUrl, platform, resolvedAwemeId)) ?? undefined;
+    }
+
+    if (!mediaUrl) {
+      throw new Error('无法自动获取视频地址。请尝试使用浏览器扩展提取，或换一个视频链接。');
+    }
+
+    const { proxyDownloadVideo, cleanupTempFile } = await import('@/lib/extract/video-proxy');
+    const proxy = await proxyDownloadVideo(mediaUrl, platform);
+    logger.info('extract/process: proxied', { jobId, size: proxy.size });
+
+    const { submitTranscriptionTask } = await import('@/lib/extract/asr-service');
+    const taskId = await submitTranscriptionTask(proxy.publicUrl, { isOssPrefix: proxy.isOssPrefix });
+
+    await db.from('extraction_jobs').update({ asr_task_id: taskId }).eq('id', jobId);
+    logger.info('extract/process: ASR submitted', { jobId, taskId, platform });
+
+    cleanupTempFile(proxy.fileId).catch(() => {});
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     await db.from('extraction_jobs').update({
@@ -93,7 +118,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }).eq('id', jobId);
     logger.error('extract/process: failed', { jobId, platform, error: errorMessage });
   } finally {
-    // Clean up uploaded file if applicable
     if (platform === 'upload' && storagePath) {
       await db.storage.from('temp-videos').remove([storagePath]).catch(() => {});
     }
