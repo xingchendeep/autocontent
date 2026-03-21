@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { createServiceRoleClient } from '@/lib/db/client';
@@ -12,7 +13,7 @@ import {
 } from '@/lib/errors';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-export const maxDuration = 120;
+export const maxDuration = 60;
 const ALLOWED_TYPES = [
   'video/mp4', 'video/webm', 'video/quicktime',
   'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm', 'audio/ogg',
@@ -129,9 +130,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // Job created — processing will happen when client polls GET /api/extract/:id
-  // Store storagePath in audio_url so the poll route can clean up after processing
-  await db.from('extraction_jobs').update({ audio_url: storagePath }).eq('id', jobId);
+  // Schedule background ASR processing using Next.js after() API
+  after(async () => {
+    const bgDb = createServiceRoleClient();
+    await bgDb.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
+
+    try {
+      const { transcribeAudio } = await import('@/lib/extract/asr-service');
+      const result = await transcribeAudio(publicUrl);
+
+      await bgDb.from('extraction_jobs').update({
+        status: 'completed',
+        method: result.method,
+        result_text: result.text,
+        duration_seconds: result.durationSeconds ?? null,
+        language: result.language ?? null,
+      }).eq('id', jobId);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      await bgDb.from('extraction_jobs').update({
+        status: 'failed',
+        error_message: errorMessage,
+      }).eq('id', jobId);
+    } finally {
+      // Clean up uploaded file
+      await bgDb.storage.from('temp-videos').remove([storagePath]).catch(() => {});
+    }
+  });
 
   return NextResponse.json(
     createSuccess({ jobId, status: 'pending', platform: 'upload' }, requestId),

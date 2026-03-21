@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
@@ -13,6 +14,8 @@ import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
 import { getPlanCapability } from '@/lib/billing/plan-capability';
 import { createServiceRoleClient } from '@/lib/db/client';
 import { detectPlatform } from '@/lib/extract';
+
+export const maxDuration = 60;
 
 const extractSchema = z.object({
   videoUrl: z.string().url('请提供有效的视频 URL'),
@@ -121,7 +124,40 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // Job created — processing will happen when client polls GET /api/extract/:id
+  // Schedule background extraction using Next.js after() API
+  // This runs after the response is sent, within the same function's maxDuration
+  after(async () => {
+    const bgDb = createServiceRoleClient();
+    await bgDb.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
+
+    try {
+      const { extractVideoScript } = await import('@/lib/extract');
+      // Extract awemeId from video URL for douyin
+      let awemeId: string | undefined;
+      if (platform === 'douyin') {
+        const videoMatch = videoUrl.match(/\/video\/(\d+)/);
+        const modalMatch = videoUrl.match(/modal_id=(\d+)/);
+        awemeId = videoMatch?.[1] ?? modalMatch?.[1] ?? undefined;
+      }
+
+      const result = await extractVideoScript(videoUrl, audioUrl ?? undefined, awemeId);
+
+      await bgDb.from('extraction_jobs').update({
+        status: 'completed',
+        method: result.method,
+        result_text: result.text,
+        duration_seconds: result.durationSeconds ?? null,
+        language: result.language ?? null,
+      }).eq('id', jobId);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      await bgDb.from('extraction_jobs').update({
+        status: 'failed',
+        error_message: errorMessage,
+      }).eq('id', jobId);
+    }
+  });
+
   return NextResponse.json(
     createSuccess({ jobId, status: 'pending', platform }, requestId),
     { status: 202, headers: { 'x-request-id': requestId } },
