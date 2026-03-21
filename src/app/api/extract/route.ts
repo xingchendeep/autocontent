@@ -151,7 +151,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // 字幕失败，继续 ASR
     }
 
-    // ASR 流程：解析视频直链 → 代理下载 → 上传 OSS → 提交 ASR（不轮询）
+    // ASR 流程：解析视频直链 → 提交 ASR（不轮询）
+    // 抖音：DashScope 可直接访问 CDN URL，跳过代理下载（避免 60s 超时）
+    // 其他平台：代理下载 → 上传 OSS → 提交 ASR
     let mediaUrl = audioUrl;
 
     if (!mediaUrl) {
@@ -175,15 +177,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const { proxyDownloadVideo, cleanupTempFile } = await import('@/lib/extract/video-proxy');
-    const proxy = await proxyDownloadVideo(mediaUrl, platform);
-
     const { submitTranscriptionTask } = await import('@/lib/extract/asr-service');
-    const taskId = await submitTranscriptionTask(proxy.publicUrl, { isOssPrefix: proxy.isOssPrefix });
 
+    // 判断是否可以直接传 URL 给 DashScope（无需代理下载）
+    // 抖音 CDN URL（douyinvod.com）DashScope 服务器在国内可直接访问
+    const isDirectAccessible = platform === 'douyin' && (
+      mediaUrl.includes('douyinvod.com')
+      || mediaUrl.includes('bytevcloudcdn')
+      || mediaUrl.includes('snssdk.com')
+    );
+
+    let taskId: string;
+
+    if (isDirectAccessible) {
+      // 直接传 CDN URL 给 DashScope，无需代理下载
+      taskId = await submitTranscriptionTask(mediaUrl, { isOssPrefix: false });
+    } else {
+      // 其他平台：代理下载 → 上传 DashScope OSS → 提交 ASR
+      const { proxyDownloadVideo, cleanupTempFile } = await import('@/lib/extract/video-proxy');
+      const proxy = await proxyDownloadVideo(mediaUrl, platform);
+      taskId = await submitTranscriptionTask(proxy.publicUrl, { isOssPrefix: proxy.isOssPrefix });
+      cleanupTempFile(proxy.fileId).catch(() => {});
+    }
+
+    // 保存 ASR task_id，GET 轮询时用来检查状态
     await db.from('extraction_jobs').update({ asr_task_id: taskId }).eq('id', jobId);
-
-    cleanupTempFile(proxy.fileId).catch(() => {});
 
     return NextResponse.json(
       createSuccess({ jobId, status: 'processing', platform }, requestId),

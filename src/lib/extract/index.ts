@@ -129,13 +129,18 @@ export async function resolveVideoUrl(
   awemeId?: string,
 ): Promise<string | null> {
   // 抖音：从 URL 提取 awemeId，然后用移动端分享页获取视频地址
+  // 返回跟随重定向后的真实 CDN URL（douyinvod.com），DashScope 可直接访问
   if (platform === 'douyin') {
     const id = awemeId
       ?? pageUrl.match(/\/video\/(\d+)/)?.[1]
       ?? pageUrl.match(/modal_id=(\d+)/)?.[1];
     if (id) {
       const url = await fetchDouyinVideoUrl(id);
-      if (url) return url;
+      if (url) {
+        // 跟随重定向获取真实 CDN URL（aweme.snssdk.com → douyinvod.com）
+        const cdnUrl = await followRedirectToFinalUrl(url);
+        return cdnUrl;
+      }
     }
   }
 
@@ -297,6 +302,32 @@ async function tryAsrWithProxy(
     if (fileId) {
       cleanupTempFile(fileId).catch(() => {});
     }
+  }
+}
+
+/**
+ * 跟随重定向获取最终 URL（轻量 HEAD 请求）
+ * 用于将 aweme.snssdk.com 的 play URL 解析为真实的 douyinvod.com CDN URL
+ */
+async function followRedirectToFinalUrl(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+        Referer: 'https://www.douyin.com/',
+      },
+      redirect: 'follow',
+    });
+    const finalUrl = res.url;
+    if (finalUrl && finalUrl !== url) {
+      logger.info('extract: followed redirect to CDN URL', { finalUrl: finalUrl.slice(0, 150) });
+      return finalUrl;
+    }
+    return url;
+  } catch (err) {
+    logger.warn('extract: followRedirectToFinalUrl failed, using original URL', { error: String(err) });
+    return url;
   }
 }
 
