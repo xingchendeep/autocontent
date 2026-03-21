@@ -17,7 +17,6 @@ import { detectPlatform } from '@/lib/extract';
 const extractSchema = z.object({
   videoUrl: z.string().url('请提供有效的视频 URL'),
   audioUrl: z.string().url().optional(),
-  awemeId: z.string().regex(/^\d+$/).optional(),
 });
 
 /**
@@ -69,7 +68,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { videoUrl, audioUrl, awemeId } = parsed.data;
+  const { videoUrl, audioUrl } = parsed.data;
   const platform = detectPlatform(videoUrl);
 
   // 频率限制：免费用户每天 3 次，付费用户不限
@@ -122,56 +121,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // 异步执行提取（不阻塞响应）
-  processExtraction(jobId, videoUrl, audioUrl, platform, awemeId).catch((err) => {
-    // 错误已在 processExtraction 内部处理并写入 DB
-    console.error('extract: background processing error', err);
-  });
-
+  // Job created — processing will happen when client polls GET /api/extract/:id
   return NextResponse.json(
     createSuccess({ jobId, status: 'pending', platform }, requestId),
     { status: 202, headers: { 'x-request-id': requestId } },
   );
-}
-
-/** 后台异步执行提取逻辑 */
-async function processExtraction(
-  jobId: string,
-  videoUrl: string,
-  audioUrl: string | undefined,
-  platform: string,
-  awemeId?: string,
-): Promise<void> {
-  const db = createServiceRoleClient();
-
-  // 标记为处理中
-  await db
-    .from('extraction_jobs')
-    .update({ status: 'processing' })
-    .eq('id', jobId);
-
-  try {
-    const { extractVideoScript } = await import('@/lib/extract');
-    const result = await extractVideoScript(videoUrl, audioUrl, awemeId);
-
-    await db
-      .from('extraction_jobs')
-      .update({
-        status: 'completed',
-        method: result.method,
-        result_text: result.text,
-        duration_seconds: result.durationSeconds ?? null,
-        language: result.language ?? null,
-      })
-      .eq('id', jobId);
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    await db
-      .from('extraction_jobs')
-      .update({
-        status: 'failed',
-        error_message: errorMessage,
-      })
-      .eq('id', jobId);
-  }
 }

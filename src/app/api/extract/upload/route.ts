@@ -12,6 +12,7 @@ import {
 } from '@/lib/errors';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+export const maxDuration = 120;
 const ALLOWED_TYPES = [
   'video/mp4', 'video/webm', 'video/quicktime',
   'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm', 'audio/ogg',
@@ -128,45 +129,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // Background ASR processing
-  processUploadExtraction(jobId, publicUrl, storagePath).catch((err) => {
-    console.error('extract/upload: background error', err);
-  });
+  // Job created — processing will happen when client polls GET /api/extract/:id
+  // Store storagePath in audio_url so the poll route can clean up after processing
+  await db.from('extraction_jobs').update({ audio_url: storagePath }).eq('id', jobId);
 
   return NextResponse.json(
     createSuccess({ jobId, status: 'pending', platform: 'upload' }, requestId),
     { status: 202, headers: { 'x-request-id': requestId } },
   );
-}
-
-async function processUploadExtraction(
-  jobId: string,
-  audioUrl: string,
-  storagePath: string,
-): Promise<void> {
-  const db = createServiceRoleClient();
-
-  await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
-
-  try {
-    const { transcribeAudio } = await import('@/lib/extract/asr-service');
-    const result = await transcribeAudio(audioUrl);
-
-    await db.from('extraction_jobs').update({
-      status: 'completed',
-      method: result.method,
-      result_text: result.text,
-      duration_seconds: result.durationSeconds ?? null,
-      language: result.language ?? null,
-    }).eq('id', jobId);
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    await db.from('extraction_jobs').update({
-      status: 'failed',
-      error_message: errorMessage,
-    }).eq('id', jobId);
-  } finally {
-    // Clean up uploaded file after processing
-    await db.storage.from('temp-videos').remove([storagePath]).catch(() => {});
-  }
 }
