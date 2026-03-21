@@ -125,7 +125,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // Trigger async processing via QStash webhook
   const qstashToken = process.env.QSTASH_TOKEN;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.help-online.cn';
+  const rawAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+  const appUrl = (rawAppUrl && !rawAppUrl.includes('localhost')) ? rawAppUrl : 'https://www.help-online.cn';
   const callbackUrl = `${appUrl}/api/extract/process`;
 
   if (qstashToken) {

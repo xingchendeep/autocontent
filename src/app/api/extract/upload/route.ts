@@ -1,9 +1,9 @@
-import { after } from 'next/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { createServiceRoleClient } from '@/lib/db/client';
 import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
 import { getPlanCapability } from '@/lib/billing/plan-capability';
+import { logger } from '@/lib/logger';
 import {
   ERROR_CODES,
   ERROR_STATUS,
@@ -130,33 +130,32 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // Schedule background ASR processing using Next.js after() API
-  after(async () => {
-    const bgDb = createServiceRoleClient();
-    await bgDb.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
+  // Trigger async processing via QStash webhook
+  const qstashToken = process.env.QSTASH_TOKEN;
+  const rawAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+  const appUrl = (rawAppUrl && !rawAppUrl.includes('localhost')) ? rawAppUrl : 'https://www.help-online.cn';
+  const callbackUrl = `${appUrl}/api/extract/process`;
 
+  if (qstashToken) {
     try {
-      const { transcribeAudio } = await import('@/lib/extract/asr-service');
-      const result = await transcribeAudio(publicUrl);
-
-      await bgDb.from('extraction_jobs').update({
-        status: 'completed',
-        method: result.method,
-        result_text: result.text,
-        duration_seconds: result.durationSeconds ?? null,
-        language: result.language ?? null,
-      }).eq('id', jobId);
+      const res = await fetch(`https://qstash.upstash.io/v2/publish/${encodeURIComponent(callbackUrl)}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${qstashToken}`,
+          'Content-Type': 'application/json',
+          'Upstash-Retries': '2',
+        },
+        body: JSON.stringify({ jobId, videoUrl: publicUrl, platform: 'upload', storagePath }),
+      });
+      if (!res.ok) {
+        logger.error('extract/upload: QStash publish failed', { jobId, status: res.status });
+      }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      await bgDb.from('extraction_jobs').update({
-        status: 'failed',
-        error_message: errorMessage,
-      }).eq('id', jobId);
-    } finally {
-      // Clean up uploaded file
-      await bgDb.storage.from('temp-videos').remove([storagePath]).catch(() => {});
+      logger.error('extract/upload: QStash publish error', { jobId, error: err instanceof Error ? err.message : String(err) });
     }
-  });
+  } else {
+    logger.warn('extract/upload: QSTASH_TOKEN not set');
+  }
 
   return NextResponse.json(
     createSuccess({ jobId, status: 'pending', platform: 'upload' }, requestId),
