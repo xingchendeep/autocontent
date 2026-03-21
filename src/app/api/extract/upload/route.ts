@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { createServiceRoleClient } from '@/lib/db/client';
 import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
@@ -11,13 +12,18 @@ import {
   createError,
 } from '@/lib/errors';
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-export const maxDuration = 60;
-const ALLOWED_TYPES = [
-  'video/mp4', 'video/webm', 'video/quicktime',
-  'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm', 'audio/ogg',
-];
+export const maxDuration = 30;
 
+const bodySchema = z.object({
+  publicUrl: z.string().url('无效的文件 URL'),
+  storagePath: z.string().min(1),
+});
+
+/**
+ * POST /api/extract/upload
+ * 接收客户端直传 Supabase Storage 后的 publicUrl，创建 ASR 提取任务。
+ * 文件本身由前端直接上传到 Supabase Storage，绕过 Vercel 4.5MB 请求体限制。
+ */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const requestId = generateRequestId();
 
@@ -31,7 +37,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const userId = session.id;
 
-  // Rate limit: free 3/day, paid unlimited
+  // Rate limit
   let planCode = 'free';
   try {
     const cap = await getPlanCapability(userId);
@@ -50,65 +56,36 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // Parse multipart form data
-  let formData: FormData;
+  let body: unknown;
   try {
-    formData = await req.formData();
+    body = await req.json();
   } catch {
     return NextResponse.json(
-      createError(ERROR_CODES.INVALID_INPUT, '请上传文件', requestId),
+      createError(ERROR_CODES.INVALID_INPUT, '请求格式错误', requestId),
       { status: ERROR_STATUS.INVALID_INPUT, headers: { 'x-request-id': requestId } },
     );
   }
 
-  const file = formData.get('file');
-  if (!file || !(file instanceof File)) {
+  const parsed = bodySchema.safeParse(body);
+  if (!parsed.success) {
     return NextResponse.json(
-      createError(ERROR_CODES.INVALID_INPUT, '请选择要上传的文件', requestId),
+      createError(ERROR_CODES.INVALID_INPUT, parsed.error.issues[0]?.message ?? '参数错误', requestId),
       { status: ERROR_STATUS.INVALID_INPUT, headers: { 'x-request-id': requestId } },
     );
   }
 
-  if (file.size > MAX_FILE_SIZE) {
-    return NextResponse.json(
-      createError(ERROR_CODES.INVALID_INPUT, '文件大小不能超过 50MB', requestId),
-      { status: ERROR_STATUS.INVALID_INPUT, headers: { 'x-request-id': requestId } },
-    );
-  }
+  const { publicUrl, storagePath } = parsed.data;
 
-  if (!ALLOWED_TYPES.includes(file.type)) {
+  // 验证 storagePath 属于当前用户（防止越权）
+  if (!storagePath.startsWith(`${userId}/`)) {
     return NextResponse.json(
-      createError(ERROR_CODES.INVALID_INPUT, '仅支持 MP4、WebM、MOV 视频和 MP3、WAV、OGG 音频格式', requestId),
-      { status: ERROR_STATUS.INVALID_INPUT, headers: { 'x-request-id': requestId } },
+      createError(ERROR_CODES.FORBIDDEN, '无权访问该文件', requestId),
+      { status: ERROR_STATUS.FORBIDDEN, headers: { 'x-request-id': requestId } },
     );
   }
 
   const db = createServiceRoleClient();
-  const fileId = crypto.randomUUID();
-  const ext = file.name.split('.').pop() ?? 'mp4';
-  const storagePath = `${userId}/${fileId}.${ext}`;
 
-  // Upload to Supabase Storage
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const { error: uploadError } = await db.storage
-    .from('temp-videos')
-    .upload(storagePath, buffer, {
-      contentType: file.type,
-      upsert: false,
-    });
-
-  if (uploadError) {
-    return NextResponse.json(
-      createError(ERROR_CODES.INTERNAL_ERROR, '文件上传失败，请重试', requestId),
-      { status: ERROR_STATUS.INTERNAL_ERROR, headers: { 'x-request-id': requestId } },
-    );
-  }
-
-  // Get public URL for ASR
-  const { data: urlData } = db.storage.from('temp-videos').getPublicUrl(storagePath);
-  const publicUrl = urlData.publicUrl;
-
-  // Create extraction job
   const { data: job, error: insertError } = await db
     .from('extraction_jobs')
     .insert({
@@ -129,7 +106,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // 异步执行 ASR（不阻塞响应）
+  // 异步执行 ASR
   processUploadExtraction(jobId, publicUrl, storagePath).catch((err) => {
     console.error('extract/upload: background processing error', err);
   });
@@ -140,14 +117,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   );
 }
 
-/** 后台异步执行上传文件的 ASR */
 async function processUploadExtraction(
   jobId: string,
   publicUrl: string,
   storagePath: string,
 ): Promise<void> {
   const db = createServiceRoleClient();
-
   await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
 
   try {
@@ -162,13 +137,12 @@ async function processUploadExtraction(
       language: result.language ?? null,
     }).eq('id', jobId);
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
     await db.from('extraction_jobs').update({
       status: 'failed',
-      error_message: errorMessage,
+      error_message: err instanceof Error ? err.message : String(err),
     }).eq('id', jobId);
   } finally {
-    // 清理上传的临时文件
+    // 清理临时文件
     const db2 = createServiceRoleClient();
     await db2.storage.from('temp-videos').remove([storagePath]).catch(() => {});
   }

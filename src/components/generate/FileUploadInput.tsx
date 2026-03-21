@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createSupabaseBrowserClient } from '@/lib/auth/client';
 
 type UploadStatus = 'idle' | 'uploading' | 'polling' | 'success' | 'error';
 
@@ -11,6 +12,10 @@ interface FileUploadInputProps {
 
 const MAX_SIZE = 50 * 1024 * 1024;
 const ALLOWED_EXTS = ['.mp4', '.webm', '.mov', '.mp3', '.wav', '.ogg'];
+const ALLOWED_MIME = [
+  'video/mp4', 'video/webm', 'video/quicktime',
+  'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm', 'audio/ogg',
+];
 
 function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -42,7 +47,9 @@ export default function FileUploadInput({ onExtracted, disabled = false }: FileU
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate
+    // Reset input so same file can be re-selected
+    if (fileRef.current) fileRef.current.value = '';
+
     if (file.size > MAX_SIZE) {
       setStatus('error');
       setMessage(`文件太大（${formatSize(file.size)}），最大支持 50MB`);
@@ -61,37 +68,68 @@ export default function FileUploadInput({ onExtracted, disabled = false }: FileU
     setMessage(`正在上传 ${file.name}（${formatSize(file.size)}）...`);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      // Step 1: 直接上传到 Supabase Storage（绕过 Vercel 4.5MB 请求体限制）
+      const supabase = createSupabaseBrowserClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setStatus('error');
+        setMessage('请先登录后再上传文件');
+        return;
+      }
 
-      const uploadRes = await fetch('/api/extract/upload', {
+      const fileId = crypto.randomUUID();
+      const ext2 = file.name.split('.').pop() ?? 'mp4';
+      const storagePath = `${user.id}/${fileId}.${ext2}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('temp-videos')
+        .upload(storagePath, file, {
+          contentType: file.type || ALLOWED_MIME[0],
+          upsert: false,
+        });
+
+      if (uploadError) {
+        setStatus('error');
+        setMessage(`上传失败：${uploadError.message}`);
+        return;
+      }
+
+      // Step 2: 获取公开 URL
+      const { data: urlData } = supabase.storage.from('temp-videos').getPublicUrl(storagePath);
+      const publicUrl = urlData.publicUrl;
+
+      setMessage('上传完成，正在提交识别任务...');
+
+      // Step 3: 通知服务端创建提取任务
+      const submitRes = await fetch('/api/extract/upload', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publicUrl, storagePath }),
       });
 
-      if (!uploadRes.ok) {
-        let errMsg = `上传失败（${uploadRes.status}）`;
+      if (!submitRes.ok) {
+        let errMsg = `提交失败（${submitRes.status}）`;
         try {
-          const errJson = await uploadRes.json();
+          const errJson = await submitRes.json();
           errMsg = errJson.error?.message ?? errMsg;
-        } catch { /* response not JSON */ }
+        } catch { /* not JSON */ }
         setStatus('error');
         setMessage(errMsg);
         return;
       }
 
-      const uploadJson = await uploadRes.json();
-      if (!uploadJson.success) {
+      const submitJson = await submitRes.json();
+      if (!submitJson.success) {
         setStatus('error');
-        setMessage(uploadJson.error?.message ?? '上传失败');
+        setMessage(submitJson.error?.message ?? '提交任务失败');
         return;
       }
 
-      const { jobId } = uploadJson.data;
+      const { jobId } = submitJson.data;
       setStatus('polling');
       setMessage('上传完成，正在识别语音内容...');
 
-      // Poll for result
+      // Step 4: 轮询结果
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 3000));
         let pollJson: { success?: boolean; data?: { status: string; result?: { text: string }; error?: string } };
@@ -106,7 +144,7 @@ export default function FileUploadInput({ onExtracted, disabled = false }: FileU
         const job = pollJson.data;
         if (job.status === 'completed' && job.result?.text) {
           setStatus('success');
-          setMessage(`✅ 语音识别完成，内容已填入输入框`);
+          setMessage('✅ 语音识别完成，内容已填入输入框');
           onExtracted(job.result.text);
           return;
         }
@@ -122,7 +160,7 @@ export default function FileUploadInput({ onExtracted, disabled = false }: FileU
     } catch (err) {
       setStatus('error');
       const detail = err instanceof Error ? err.message : String(err);
-      setMessage(`请求异常：${detail}`);
+      setMessage(`上传出错：${detail}`);
     }
   }, [onExtracted]);
 
@@ -157,7 +195,6 @@ export default function FileUploadInput({ onExtracted, disabled = false }: FileU
         )}
       </div>
 
-      {/* Progress bar */}
       {isWorking && (
         <div>
           <div className="h-1.5 w-full rounded-full bg-zinc-200 overflow-hidden mb-1">
