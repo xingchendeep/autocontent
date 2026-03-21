@@ -59,6 +59,12 @@ export async function extractVideoScript(
       audioUrl = resolvedUrl;
       logger.info('extract: resolved video URL server-side', { audioUrl: audioUrl.slice(0, 100) });
     } else {
+      // 针对不同平台给出更具体的错误提示
+      if (platform === 'bilibili') {
+        throw new Error(
+          '无法获取B站视频音频流（可能需要登录或视频有访问限制）。请尝试使用浏览器扩展提取。',
+        );
+      }
       throw new Error(
         '无法自动获取视频地址。请尝试使用浏览器扩展提取，或换一个视频链接。',
       );
@@ -163,12 +169,19 @@ async function resolveBilibiliVideoUrl(pageUrl: string): Promise<string | null> 
         },
       },
     );
-    if (!viewRes.ok) return null;
+    if (!viewRes.ok) {
+      logger.warn('extract: bilibili view API HTTP error', { status: viewRes.status });
+      return null;
+    }
     const viewJson = (await viewRes.json()) as { code: number; data?: { cid?: number } };
-    if (viewJson.code !== 0 || !viewJson.data?.cid) return null;
+    if (viewJson.code !== 0 || !viewJson.data?.cid) {
+      logger.warn('extract: bilibili view API returned no cid', { code: viewJson.code });
+      return null;
+    }
     const cid = viewJson.data.cid;
 
     // 获取视频流地址（fnval=16 请求 DASH 格式，包含独立音频流）
+    // 注意：无 cookie 时 B站可能返回 -403（权限不足），这是正常的
     const playRes = await fetch(
       `https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${cid}&fnval=16`,
       {
@@ -178,30 +191,44 @@ async function resolveBilibiliVideoUrl(pageUrl: string): Promise<string | null> 
         },
       },
     );
-    if (!playRes.ok) return null;
+    if (!playRes.ok) {
+      logger.warn('extract: bilibili playurl API HTTP error', { status: playRes.status });
+      return null;
+    }
     const playJson = (await playRes.json()) as {
       code: number;
+      message?: string;
       data?: {
-        dash?: { audio?: Array<{ baseUrl: string }> };
-        durl?: Array<{ url: string }>;
+        dash?: { audio?: Array<{ baseUrl: string; backup_url?: string[] }> };
+        durl?: Array<{ url: string; backup_url?: string[] }>;
       };
     };
-    if (playJson.code !== 0 || !playJson.data) return null;
+
+    if (playJson.code !== 0 || !playJson.data) {
+      logger.warn('extract: bilibili playurl API error', {
+        code: playJson.code,
+        message: playJson.message,
+        bvid,
+      });
+      // code=-403 表示需要登录，无法获取视频流
+      return null;
+    }
 
     // 优先用 DASH 音频流（纯音频，体积小，ASR 效果好）
-    const dashAudio = playJson.data.dash?.audio?.[0]?.baseUrl;
-    if (dashAudio) {
-      logger.info('extract: resolved bilibili DASH audio', { url: dashAudio.slice(0, 100) });
-      return dashAudio;
+    const dashAudioTrack = playJson.data.dash?.audio?.[0];
+    if (dashAudioTrack?.baseUrl) {
+      logger.info('extract: resolved bilibili DASH audio', { url: dashAudioTrack.baseUrl.slice(0, 100) });
+      return dashAudioTrack.baseUrl;
     }
 
     // fallback: durl（合并流）
-    const durlUrl = playJson.data.durl?.[0]?.url;
-    if (durlUrl) {
-      logger.info('extract: resolved bilibili durl', { url: durlUrl.slice(0, 100) });
-      return durlUrl;
+    const durlTrack = playJson.data.durl?.[0];
+    if (durlTrack?.url) {
+      logger.info('extract: resolved bilibili durl', { url: durlTrack.url.slice(0, 100) });
+      return durlTrack.url;
     }
 
+    logger.warn('extract: bilibili playurl returned no audio/video URLs', { bvid });
     return null;
   } catch (err) {
     logger.warn('extract: resolveBilibiliVideoUrl failed', { error: String(err) });

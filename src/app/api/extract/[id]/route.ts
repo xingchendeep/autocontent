@@ -74,35 +74,17 @@ export async function GET(req: NextRequest, ctx: RouteContext): Promise<NextResp
     );
   }
 
-  const isStaleProcessing = row.status === 'processing'
-    && Date.now() - new Date(row.updated_at).getTime() > 60_000;
+  // 仅对 upload 类型做 sync fallback（upload 没有 /api/extract/process 异步处理）
+  // 非 upload 类型（bilibili、douyin 等）由 /api/extract/process 异步处理，GET 只做纯查询
+  const isUploadStale = row.platform === 'upload'
+    && (row.status === 'pending' || (row.status === 'processing' && Date.now() - new Date(row.updated_at).getTime() > 60_000));
 
-  if (row.status === 'pending' || (row.platform === 'upload' && isStaleProcessing)) {
+  if (isUploadStale) {
     await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
 
     try {
-      let result: {
-        text: string;
-        method: string;
-        durationSeconds?: number;
-        language?: string;
-      };
-
-      if (row.platform === 'upload') {
-        const { transcribeAudio } = await import('@/lib/extract/asr-service');
-        result = await transcribeAudio(row.video_url);
-      } else {
-        const { extractVideoScript } = await import('@/lib/extract');
-        let awemeId: string | undefined;
-
-        if (row.platform === 'douyin') {
-          const videoMatch = row.video_url.match(/\/video\/(\d+)/);
-          const modalMatch = row.video_url.match(/modal_id=(\d+)/);
-          awemeId = videoMatch?.[1] ?? modalMatch?.[1] ?? undefined;
-        }
-
-        result = await extractVideoScript(row.video_url, undefined, awemeId);
-      }
+      const { transcribeAudio } = await import('@/lib/extract/asr-service');
+      const result = await transcribeAudio(row.video_url);
 
       await db.from('extraction_jobs').update({
         status: 'completed',
