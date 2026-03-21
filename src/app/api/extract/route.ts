@@ -124,10 +124,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // 异步执行提取（不阻塞响应）
-  processExtraction(jobId, videoUrl, audioUrl, platform, awemeId).catch((err) => {
-    // 错误已在 processExtraction 内部处理并写入 DB
-    console.error('extract: background processing error', err);
+  // 通过内部 HTTP 调用 /api/extract/process 来异步处理
+  // 不能用 .catch() 异步启动，因为 Vercel 在响应返回后会冻结 serverless function
+  const processUrl = `${req.nextUrl.origin}/api/extract/process`;
+  fetch(processUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobId, videoUrl, audioUrl, platform, awemeId }),
+  }).catch((err) => {
+    console.error('extract: failed to dispatch process request', err);
   });
 
   return NextResponse.json(
@@ -136,44 +141,4 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   );
 }
 
-/** 后台异步执行提取逻辑 */
-async function processExtraction(
-  jobId: string,
-  videoUrl: string,
-  audioUrl: string | undefined,
-  platform: string,
-  awemeId?: string,
-): Promise<void> {
-  const db = createServiceRoleClient();
 
-  // 标记为处理中
-  await db
-    .from('extraction_jobs')
-    .update({ status: 'processing' })
-    .eq('id', jobId);
-
-  try {
-    const { extractVideoScript } = await import('@/lib/extract');
-    const result = await extractVideoScript(videoUrl, audioUrl, awemeId);
-
-    await db
-      .from('extraction_jobs')
-      .update({
-        status: 'completed',
-        method: result.method,
-        result_text: result.text,
-        duration_seconds: result.durationSeconds ?? null,
-        language: result.language ?? null,
-      })
-      .eq('id', jobId);
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    await db
-      .from('extraction_jobs')
-      .update({
-        status: 'failed',
-        error_message: errorMessage,
-      })
-      .eq('id', jobId);
-  }
-}

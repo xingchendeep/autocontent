@@ -106,9 +106,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // 异步执行 ASR
-  processUploadExtraction(jobId, publicUrl, storagePath).catch((err) => {
-    console.error('extract/upload: background processing error', err);
+  // 通过内部 HTTP 调用 /api/extract/process 来异步处理
+  // 不能用 .catch() 异步启动，因为 Vercel 在响应返回后会冻结 serverless function
+  const processUrl = `${req.nextUrl.origin}/api/extract/process`;
+  fetch(processUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jobId,
+      videoUrl: publicUrl,
+      platform: 'upload',
+      storagePath,
+    }),
+  }).catch((err) => {
+    console.error('extract/upload: failed to dispatch process request', err);
   });
 
   return NextResponse.json(
@@ -117,33 +128,4 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   );
 }
 
-async function processUploadExtraction(
-  jobId: string,
-  publicUrl: string,
-  storagePath: string,
-): Promise<void> {
-  const db = createServiceRoleClient();
-  await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
 
-  try {
-    const { transcribeAudio } = await import('@/lib/extract/asr-service');
-    const result = await transcribeAudio(publicUrl);
-
-    await db.from('extraction_jobs').update({
-      status: 'completed',
-      method: result.method,
-      result_text: result.text,
-      duration_seconds: result.durationSeconds ?? null,
-      language: result.language ?? null,
-    }).eq('id', jobId);
-  } catch (err) {
-    await db.from('extraction_jobs').update({
-      status: 'failed',
-      error_message: err instanceof Error ? err.message : String(err),
-    }).eq('id', jobId);
-  } finally {
-    // 清理临时文件
-    const db2 = createServiceRoleClient();
-    await db2.storage.from('temp-videos').remove([storagePath]).catch(() => {});
-  }
-}

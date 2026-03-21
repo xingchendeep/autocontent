@@ -10,6 +10,8 @@ import {
   createError,
 } from '@/lib/errors';
 
+export const maxDuration = 60;
+
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
