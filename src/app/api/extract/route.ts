@@ -1,4 +1,3 @@
-import { after } from 'next/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
@@ -14,12 +13,12 @@ import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
 import { getPlanCapability } from '@/lib/billing/plan-capability';
 import { createServiceRoleClient } from '@/lib/db/client';
 import { detectPlatform } from '@/lib/extract';
-
-export const maxDuration = 60;
+import { logger } from '@/lib/logger';
 
 const extractSchema = z.object({
   videoUrl: z.string().url('请提供有效的视频 URL'),
   audioUrl: z.string().url().optional(),
+  awemeId: z.string().regex(/^\d+$/).optional(),
 });
 
 /**
@@ -71,7 +70,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { videoUrl, audioUrl } = parsed.data;
+  const { videoUrl, audioUrl, awemeId } = parsed.data;
   const platform = detectPlatform(videoUrl);
 
   // 频率限制：免费用户每天 3 次，付费用户不限
@@ -124,39 +123,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // Schedule background extraction using Next.js after() API
-  // This runs after the response is sent, within the same function's maxDuration
-  after(async () => {
-    const bgDb = createServiceRoleClient();
-    await bgDb.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
+  // Trigger async processing via QStash webhook
+  const qstashToken = process.env.QSTASH_TOKEN;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.help-online.cn';
+  const callbackUrl = `${appUrl}/api/extract/process`;
 
+  if (qstashToken) {
     try {
-      const { extractVideoScript } = await import('@/lib/extract');
-      // Extract awemeId from video URL for douyin
-      let awemeId: string | undefined;
-      if (platform === 'douyin') {
-        const videoMatch = videoUrl.match(/\/video\/(\d+)/);
-        const modalMatch = videoUrl.match(/modal_id=(\d+)/);
-        awemeId = videoMatch?.[1] ?? modalMatch?.[1] ?? undefined;
+      const res = await fetch(`https://qstash.upstash.io/v2/publish/${encodeURIComponent(callbackUrl)}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${qstashToken}`,
+          'Content-Type': 'application/json',
+          'Upstash-Retries': '2',
+        },
+        body: JSON.stringify({ jobId, videoUrl, audioUrl: audioUrl ?? null, platform, awemeId: awemeId ?? null }),
+      });
+      if (!res.ok) {
+        logger.error('extract: QStash publish failed', { jobId, status: res.status });
       }
-
-      const result = await extractVideoScript(videoUrl, audioUrl ?? undefined, awemeId);
-
-      await bgDb.from('extraction_jobs').update({
-        status: 'completed',
-        method: result.method,
-        result_text: result.text,
-        duration_seconds: result.durationSeconds ?? null,
-        language: result.language ?? null,
-      }).eq('id', jobId);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      await bgDb.from('extraction_jobs').update({
-        status: 'failed',
-        error_message: errorMessage,
-      }).eq('id', jobId);
+      logger.error('extract: QStash publish error', { jobId, error: err instanceof Error ? err.message : String(err) });
     }
-  });
+  } else {
+    logger.warn('extract: QSTASH_TOKEN not set, extraction will not be processed');
+  }
 
   return NextResponse.json(
     createSuccess({ jobId, status: 'pending', platform }, requestId),
