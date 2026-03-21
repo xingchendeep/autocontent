@@ -10,6 +10,19 @@ import { createSupabaseMiddlewareClient } from '@/lib/auth/middleware-client';
 export async function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
 
+  // CORS preflight: 浏览器扩展调用 API 时会先发 OPTIONS 请求
+  if (pathname.startsWith('/api/') && request.method === 'OPTIONS') {
+    return new NextResponse(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Max-Age': '86400',
+      },
+    });
+  }
+
   // Fallback: redirect /?code=... to /auth/callback?code=...
   // Handles Supabase Magic Link emails that point to the root URL instead of /auth/callback
   if (pathname === '/' && searchParams.has('code')) {
@@ -40,5 +53,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/', '/dashboard/:path*', '/admin/:path*', '/login', '/register', '/forgot-password'],
+  matcher: ['/', '/api/:path*', '/dashboard/:path*', '/admin/:path*', '/login', '/register', '/forgot-password'],
 };
