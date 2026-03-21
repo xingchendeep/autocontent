@@ -3,7 +3,6 @@ import { getSession } from '@/lib/auth';
 import { createServiceRoleClient } from '@/lib/db/client';
 import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
 import { getPlanCapability } from '@/lib/billing/plan-capability';
-import { logger } from '@/lib/logger';
 import {
   ERROR_CODES,
   ERROR_STATUS,
@@ -130,35 +129,47 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // Trigger async processing via QStash webhook
-  const qstashToken = process.env.QSTASH_TOKEN;
-  const rawAppUrl = process.env.NEXT_PUBLIC_APP_URL;
-  const appUrl = (rawAppUrl && !rawAppUrl.includes('localhost')) ? rawAppUrl : 'https://www.help-online.cn';
-  const callbackUrl = `${appUrl}/api/extract/process`;
-
-  if (qstashToken) {
-    try {
-      const res = await fetch(`https://qstash.upstash.io/v2/publish/${encodeURIComponent(callbackUrl)}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${qstashToken}`,
-          'Content-Type': 'application/json',
-          'Upstash-Retries': '2',
-        },
-        body: JSON.stringify({ jobId, videoUrl: publicUrl, platform: 'upload', storagePath }),
-      });
-      if (!res.ok) {
-        logger.error('extract/upload: QStash publish failed', { jobId, status: res.status });
-      }
-    } catch (err) {
-      logger.error('extract/upload: QStash publish error', { jobId, error: err instanceof Error ? err.message : String(err) });
-    }
-  } else {
-    logger.warn('extract/upload: QSTASH_TOKEN not set');
-  }
+  // 异步执行 ASR（不阻塞响应）
+  processUploadExtraction(jobId, publicUrl, storagePath).catch((err) => {
+    console.error('extract/upload: background processing error', err);
+  });
 
   return NextResponse.json(
     createSuccess({ jobId, status: 'pending', platform: 'upload' }, requestId),
     { status: 202, headers: { 'x-request-id': requestId } },
   );
+}
+
+/** 后台异步执行上传文件的 ASR */
+async function processUploadExtraction(
+  jobId: string,
+  publicUrl: string,
+  storagePath: string,
+): Promise<void> {
+  const db = createServiceRoleClient();
+
+  await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
+
+  try {
+    const { transcribeAudio } = await import('@/lib/extract/asr-service');
+    const result = await transcribeAudio(publicUrl);
+
+    await db.from('extraction_jobs').update({
+      status: 'completed',
+      method: result.method,
+      result_text: result.text,
+      duration_seconds: result.durationSeconds ?? null,
+      language: result.language ?? null,
+    }).eq('id', jobId);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    await db.from('extraction_jobs').update({
+      status: 'failed',
+      error_message: errorMessage,
+    }).eq('id', jobId);
+  } finally {
+    // 清理上传的临时文件
+    const db2 = createServiceRoleClient();
+    await db2.storage.from('temp-videos').remove([storagePath]).catch(() => {});
+  }
 }

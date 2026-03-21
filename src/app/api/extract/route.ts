@@ -13,7 +13,8 @@ import { checkRateLimit, buildRateLimitKey } from '@/lib/rate-limit';
 import { getPlanCapability } from '@/lib/billing/plan-capability';
 import { createServiceRoleClient } from '@/lib/db/client';
 import { detectPlatform } from '@/lib/extract';
-import { logger } from '@/lib/logger';
+
+export const maxDuration = 60;
 
 const extractSchema = z.object({
   videoUrl: z.string().url('请提供有效的视频 URL'),
@@ -123,35 +124,56 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // Trigger async processing via QStash webhook
-  const qstashToken = process.env.QSTASH_TOKEN;
-  const rawAppUrl = process.env.NEXT_PUBLIC_APP_URL;
-  const appUrl = (rawAppUrl && !rawAppUrl.includes('localhost')) ? rawAppUrl : 'https://www.help-online.cn';
-  const callbackUrl = `${appUrl}/api/extract/process`;
-
-  if (qstashToken) {
-    try {
-      const res = await fetch(`https://qstash.upstash.io/v2/publish/${encodeURIComponent(callbackUrl)}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${qstashToken}`,
-          'Content-Type': 'application/json',
-          'Upstash-Retries': '2',
-        },
-        body: JSON.stringify({ jobId, videoUrl, audioUrl: audioUrl ?? null, platform, awemeId: awemeId ?? null }),
-      });
-      if (!res.ok) {
-        logger.error('extract: QStash publish failed', { jobId, status: res.status });
-      }
-    } catch (err) {
-      logger.error('extract: QStash publish error', { jobId, error: err instanceof Error ? err.message : String(err) });
-    }
-  } else {
-    logger.warn('extract: QSTASH_TOKEN not set, extraction will not be processed');
-  }
+  // 异步执行提取（不阻塞响应）
+  processExtraction(jobId, videoUrl, audioUrl, platform, awemeId).catch((err) => {
+    // 错误已在 processExtraction 内部处理并写入 DB
+    console.error('extract: background processing error', err);
+  });
 
   return NextResponse.json(
     createSuccess({ jobId, status: 'pending', platform }, requestId),
     { status: 202, headers: { 'x-request-id': requestId } },
   );
+}
+
+/** 后台异步执行提取逻辑 */
+async function processExtraction(
+  jobId: string,
+  videoUrl: string,
+  audioUrl: string | undefined,
+  platform: string,
+  awemeId?: string,
+): Promise<void> {
+  const db = createServiceRoleClient();
+
+  // 标记为处理中
+  await db
+    .from('extraction_jobs')
+    .update({ status: 'processing' })
+    .eq('id', jobId);
+
+  try {
+    const { extractVideoScript } = await import('@/lib/extract');
+    const result = await extractVideoScript(videoUrl, audioUrl, awemeId);
+
+    await db
+      .from('extraction_jobs')
+      .update({
+        status: 'completed',
+        method: result.method,
+        result_text: result.text,
+        duration_seconds: result.durationSeconds ?? null,
+        language: result.language ?? null,
+      })
+      .eq('id', jobId);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    await db
+      .from('extraction_jobs')
+      .update({
+        status: 'failed',
+        error_message: errorMessage,
+      })
+      .eq('id', jobId);
+  }
 }
