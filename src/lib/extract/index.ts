@@ -301,12 +301,47 @@ async function tryAsrWithProxy(
 }
 
 /**
- * 通过抖音 Web API 获取视频的无水印播放地址
- * 这个地址通常是音视频合并的 MP4
+ * 通过抖音 Web API 获取视频的播放地址
+ * 多种方法依次尝试，确保高成功率
  */
 async function fetchDouyinVideoUrl(awemeId: string): Promise<string | null> {
+  // 方法 1：抖音移动端 Web API（最可靠）
   try {
-    // 方法 1：通过抖音移动端分享页获取重定向后的视频地址
+    const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${awemeId}`;
+    const res = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        Referer: 'https://www.iesdouyin.com/',
+      },
+    });
+
+    if (res.ok) {
+      const json = (await res.json()) as {
+        item_list?: Array<{
+          video?: {
+            play_addr?: { url_list?: string[] };
+            download_addr?: { url_list?: string[] };
+          };
+        }>;
+      };
+
+      const video = json.item_list?.[0]?.video;
+      // 优先 download_addr（无水印），其次 play_addr
+      const urlList = video?.download_addr?.url_list ?? video?.play_addr?.url_list;
+      if (urlList?.length) {
+        // 替换 playwm 为 play 去水印
+        const url = urlList[0].replace(/\/playwm\//, '/play/');
+        logger.info('extract: got douyin video URL from iteminfo API', { url: url.slice(0, 120) });
+        return url;
+      }
+    }
+    logger.info('extract: douyin iteminfo API returned no video URL, trying share page');
+  } catch (err) {
+    logger.warn('extract: douyin iteminfo API failed', { error: String(err) });
+  }
+
+  // 方法 2：抖音分享页 HTML 解析
+  try {
     const shareUrl = `https://www.iesdouyin.com/share/video/${awemeId}/`;
     const res = await fetch(shareUrl, {
       headers: {
@@ -322,40 +357,37 @@ async function fetchDouyinVideoUrl(awemeId: string): Promise<string | null> {
 
     const html = await res.text();
 
-    // 从分享页 HTML 中提取视频 URL
-    // 分享页通常包含 playAddr 或 video_url 在 script 标签中
+    // 从 SSR 数据中提取视频 URL
     const patterns = [
-      // SSR 数据中的 playAddr
       /"playAddr"\s*:\s*"(https?:[^"]+)"/,
       /"play_addr"\s*:\s*\{[^}]*"url_list"\s*:\s*\["(https?:[^"]+)"/,
-      // 直接的视频 URL
-      /https?:\/\/[^"'\s]+?(?:douyinvod|v\d+-[a-z]+)[^"'\s]*?(?:video_id|aweme_id)[^"'\s]*/i,
+      /"download_addr"\s*:\s*\{[^}]*"url_list"\s*:\s*\["(https?:[^"]+)"/,
     ];
 
     for (const pat of patterns) {
       const match = html.match(pat);
       if (match?.[1]) {
-        const url = match[1].replace(/\\u002F/g, '/').replace(/\\/g, '');
+        const url = match[1].replace(/\\u002F/g, '/').replace(/\\/g, '').replace(/\/playwm\//, '/play/');
         if (url.startsWith('http')) {
-          logger.info('extract: found video URL from douyin share page', { url: url.slice(0, 100) });
+          logger.info('extract: found video URL from douyin share page', { url: url.slice(0, 120) });
           return url;
         }
       }
     }
 
-    // 方法 2：尝试从 HTML 中提取所有 douyinvod URL
-    const vodPat = /https?:\/\/[^"'\s\\]+?(?:douyinvod|v\d+-[a-z]+\.douyinvod)[^"'\s\\]*/gi;
+    // 兜底：提取所有字节系 CDN URL
+    const vodPat = /https?:\/\/[^"'\s\\]+?(?:douyinvod|v\d+-[a-z]+\.douyinvod|bytevcloudcdn)[^"'\s\\]*/gi;
     const vodMatches = html.match(vodPat);
-    if (vodMatches && vodMatches.length > 0) {
+    if (vodMatches?.length) {
       const url = vodMatches[0].replace(/\\u002F/g, '/').replace(/\\/g, '');
-      logger.info('extract: found vod URL from douyin share page', { url: url.slice(0, 100) });
+      logger.info('extract: found vod URL from douyin share page', { url: url.slice(0, 120) });
       return url;
     }
 
-    logger.warn('extract: no video URL found in douyin share page');
+    logger.warn('extract: no video URL found in douyin share page HTML');
     return null;
   } catch (err) {
-    logger.warn('extract: fetchDouyinVideoUrl failed', { error: String(err) });
+    logger.warn('extract: fetchDouyinVideoUrl share page failed', { error: String(err) });
     return null;
   }
 }
