@@ -92,7 +92,7 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
           continue; // network hiccup, retry
         }
 
-        if (!pollJson.success) continue;
+        if (!pollJson.success || !pollJson.data) continue;
 
         const job = pollJson.data;
         if (job.status === 'completed' && job.result?.text) {
