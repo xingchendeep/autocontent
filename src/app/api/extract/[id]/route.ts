@@ -89,8 +89,16 @@ export async function GET(req: NextRequest, ctx: RouteContext): Promise<NextResp
       };
 
       if (row.platform === 'upload') {
+        const { proxyDownloadVideo, cleanupTempFile } = await import('@/lib/extract/video-proxy');
         const { transcribeAudio } = await import('@/lib/extract/asr-service');
-        result = await transcribeAudio(row.video_url);
+        let proxyFileId: string | undefined;
+        try {
+          const proxy = await proxyDownloadVideo(row.video_url, 'upload');
+          proxyFileId = proxy.fileId;
+          result = await transcribeAudio(proxy.publicUrl, { isOssPrefix: proxy.isOssPrefix });
+        } finally {
+          if (proxyFileId) cleanupTempFile(proxyFileId).catch(() => {});
+        }
       } else {
         const { extractVideoScript } = await import('@/lib/extract');
         let awemeId: string | undefined;
