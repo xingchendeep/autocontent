@@ -9,7 +9,6 @@ interface VideoUrlInputProps {
   disabled?: boolean;
 }
 
-/** 支持的视频平台提示 */
 const SUPPORTED_HINT = 'B站、抖音、快手等平台的视频链接';
 
 export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUrlInputProps) {
@@ -27,7 +26,6 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
       timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = null;
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [isWorking]);
@@ -36,34 +34,87 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
     try {
       const u = new URL(v.trim());
       return u.protocol === 'http:' || u.protocol === 'https:';
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }, []);
 
-  const canExtract = url.trim().length > 0 && isValidUrl(url) && status !== 'extracting' && status !== 'polling';
+  const canExtract = url.trim().length > 0 && isValidUrl(url) && !isWorking;
 
-  async function handleExtract() {
-    if (!canExtract) return;
-    const videoUrl = url.trim();
-
-    setStatus('extracting');
-    setMessage('正在提交提取任务...');
-
+  // ── B站：通过服务端代理提取字幕（服务端调 B站 API，无 CORS 限制）──
+  async function extractBilibili(videoUrl: string): Promise<string | null> {
     try {
-      // Step 1: Submit extraction job
-      const submitRes = await fetch('/api/extract', {
+      setMessage('正在提取 B站字幕...');
+      const res = await fetch('/api/extract/bilibili-subtitle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ videoUrl }),
       });
+      if (!res.ok) return null;
+      const json = await res.json() as { success?: boolean; data?: { text: string } };
+      return json.success && json.data?.text ? json.data.text : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ── 抖音：浏览器端解析视频直链，然后交给服务端 ASR ──
+  async function extractDouyin(videoUrl: string): Promise<{ videoDirectUrl: string; awemeId: string } | null> {
+    try {
+      // 从 URL 提取 awemeId
+      const videoMatch = videoUrl.match(/\/video\/(\d+)/);
+      const modalMatch = videoUrl.match(/modal_id=(\d+)/);
+      const awemeId = videoMatch?.[1] ?? modalMatch?.[1] ?? '';
+
+      // 尝试从当前页面（如果是抖音页面）获取视频直链
+      // 网页版无法直接访问抖音 API（跨域），只能传 awemeId 给服务端
+      return awemeId ? { videoDirectUrl: '', awemeId } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function handleExtract() {
+    if (!canExtract) return;
+    const videoUrl = url.trim();
+    const host = (() => { try { return new URL(videoUrl).hostname; } catch { return ''; } })();
+
+    setStatus('extracting');
+    setMessage('正在分析链接...');
+
+    try {
+      // ── B站：浏览器端直接提取字幕 ──
+      if (host.includes('bilibili.com') || host.includes('b23.tv')) {
+        const text = await extractBilibili(videoUrl);
+        if (text) {
+          setStatus('success');
+          setMessage('✅ B站字幕提取成功，内容已填入输入框');
+          onExtracted(text);
+          return;
+        }
+        // 字幕提取失败，fallback 到服务端 ASR
+        setMessage('该视频无字幕，尝试语音识别...');
+      }
+
+      // ── 抖音：提取 awemeId，传给服务端 ──
+      let extraBody: Record<string, string> = {};
+      if (host.includes('douyin.com')) {
+        const dy = await extractDouyin(videoUrl);
+        if (dy?.awemeId) {
+          extraBody = { awemeId: dy.awemeId };
+          setMessage(`已获取视频 ID（${dy.awemeId}），正在提交语音识别...`);
+        }
+      }
+
+      // ── 提交服务端提取任务 ──
+      setMessage('正在提交提取任务...');
+      const submitRes = await fetch('/api/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoUrl, ...extraBody }),
+      });
 
       if (!submitRes.ok) {
         let errMsg = `请求失败（${submitRes.status}）`;
-        try {
-          const errJson = await submitRes.json();
-          errMsg = errJson.error?.message ?? errMsg;
-        } catch { /* response not JSON */ }
+        try { const j = await submitRes.json(); errMsg = j.error?.message ?? errMsg; } catch { /* */ }
         setStatus('error');
         setMessage(errMsg);
         return;
@@ -76,25 +127,22 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
         return;
       }
 
-      const { jobId, platform } = submitJson.data;
+      const { jobId, platform } = submitJson.data as { jobId: string; platform: string };
       setStatus('polling');
       setMessage(`正在提取视频脚本（${platform}），请稍候...`);
 
-      // Step 2: Poll for result
+      // ── 轮询结果 ──
       for (let i = 0; i < 40; i++) {
         await new Promise((r) => setTimeout(r, 3000));
-
         let pollJson: { success?: boolean; data?: { status: string; result?: { text: string; method: string }; error?: string } };
         try {
           const pollRes = await fetch(`/api/extract/${jobId}`);
           pollJson = await pollRes.json();
-        } catch {
-          continue; // network hiccup, retry
-        }
+        } catch { continue; }
 
         if (!pollJson.success || !pollJson.data) continue;
-
         const job = pollJson.data;
+
         if (job.status === 'completed' && job.result?.text) {
           setStatus('success');
           const method = job.result.method === 'subtitle_api' ? '字幕提取' : '语音识别';
@@ -113,8 +161,7 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
       setMessage('提取超时，请稍后重试');
     } catch (err) {
       setStatus('error');
-      const detail = err instanceof Error ? err.message : String(err);
-      setMessage(`请求异常：${detail}`);
+      setMessage(`请求异常：${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -131,7 +178,7 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
               : 'bg-white text-zinc-900 border-zinc-300',
           ].join(' ')}
           value={url}
-          onChange={(e) => { setUrl(e.target.value); if (status === 'error' || status === 'success') setStatus('idle'); }}
+          onChange={(e) => { setUrl(e.target.value); if (status !== 'idle') setStatus('idle'); setMessage(''); }}
           disabled={disabled || isWorking}
           placeholder={`粘贴视频链接（${SUPPORTED_HINT}）`}
           aria-label="视频链接输入"
@@ -152,7 +199,6 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
         </button>
       </div>
 
-      {/* Status message + progress */}
       {isWorking && (
         <div className="px-1">
           <div className="h-1.5 w-full rounded-full bg-zinc-200 overflow-hidden mb-1">
@@ -167,6 +213,7 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
           </p>
         </div>
       )}
+
       {!isWorking && message && (
         <p
           className={[
