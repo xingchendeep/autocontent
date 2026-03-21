@@ -6,6 +6,7 @@ import { generateRequestId, createSuccess, createError, ERROR_CODES, ERROR_STATU
 import { logger } from '@/lib/logger';
 
 export const maxDuration = 30;
+export const preferredRegion = 'hkg1';
 
 const schema = z.object({
   videoUrl: z.string().url(),

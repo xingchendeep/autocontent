@@ -12,6 +12,7 @@ import {
 } from '@/lib/errors';
 
 export const maxDuration = 60;
+export const preferredRegion = 'hkg1';
 
 type RouteContext = { params: Promise<{ id: string }> };
 

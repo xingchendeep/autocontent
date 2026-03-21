@@ -15,6 +15,7 @@ import { createServiceRoleClient } from '@/lib/db/client';
 import { detectPlatform } from '@/lib/extract';
 
 export const maxDuration = 60;
+export const preferredRegion = 'hkg1';
 
 const extractSchema = z.object({
   videoUrl: z.string().url('请提供有效的视频 URL'),
