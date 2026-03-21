@@ -56,17 +56,28 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
     }
   }
 
-  // ── 抖音：浏览器端解析视频直链，然后交给服务端 ASR ──
-  async function extractDouyin(videoUrl: string): Promise<{ videoDirectUrl: string; awemeId: string } | null> {
+  // ── 抖音：解析短链/分享链获取 awemeId，然后交给服务端 ASR ──
+  async function extractDouyin(videoUrl: string): Promise<{ awemeId: string } | null> {
     try {
-      // 从 URL 提取 awemeId
-      const videoMatch = videoUrl.match(/\/video\/(\d+)/);
-      const modalMatch = videoUrl.match(/modal_id=(\d+)/);
-      const awemeId = videoMatch?.[1] ?? modalMatch?.[1] ?? '';
+      // 先尝试直接从 URL 提取 awemeId
+      const videoMatch = videoUrl.match(/\/video\/(\d{15,})/);
+      const modalMatch = videoUrl.match(/modal_id=(\d{15,})/);
+      const directId = videoMatch?.[1] ?? modalMatch?.[1];
+      if (directId) return { awemeId: directId };
 
-      // 尝试从当前页面（如果是抖音页面）获取视频直链
-      // 网页版无法直接访问抖音 API（跨域），只能传 awemeId 给服务端
-      return awemeId ? { videoDirectUrl: '', awemeId } : null;
+      // 短链/分享链：调服务端解析（服务端跟随重定向提取 awemeId）
+      setMessage('正在解析抖音链接...');
+      const res = await fetch('/api/extract/resolve-douyin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoUrl }),
+      });
+      if (!res.ok) return null;
+      const json = await res.json() as { success?: boolean; data?: { awemeId: string } };
+      if (json.success && json.data?.awemeId) {
+        return { awemeId: json.data.awemeId };
+      }
+      return null;
     } catch {
       return null;
     }
@@ -94,13 +105,17 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
         setMessage('该视频无字幕，尝试语音识别...');
       }
 
-      // ── 抖音：提取 awemeId，传给服务端 ──
+      // ── 抖音：提取 awemeId（支持短链/分享链），传给服务端 ──
       let extraBody: Record<string, string> = {};
-      if (host.includes('douyin.com')) {
+      if (host.includes('douyin.com') || host.includes('iesdouyin.com')) {
         const dy = await extractDouyin(videoUrl);
         if (dy?.awemeId) {
           extraBody = { awemeId: dy.awemeId };
           setMessage(`已获取视频 ID（${dy.awemeId}），正在提交语音识别...`);
+        } else {
+          setStatus('error');
+          setMessage('无法从该抖音链接解析出视频 ID，请尝试使用完整的视频页面链接');
+          return;
         }
       }
 

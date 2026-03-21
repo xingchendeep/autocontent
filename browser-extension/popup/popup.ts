@@ -187,17 +187,29 @@ btnExtractScript.addEventListener('click', async () => {
         target: { tabId: currentTabId },
         func: () => {
           try {
-            const urls: string[] = [];
             const cleanUrl = (u: string) => u.replace(/\\u002F/g, '/').replace(/\\/g, '');
-            const addUrl = (u: string) => {
+
+            // 严格视频 URL 校验：必须是视频流域名，排除图片/图标等非视频资源
+            const VIDEO_CDN_PATTERNS = /(?:douyinvod|v\d+-[a-z]+\.douyinvod|bytevcloudcdn|bytecdn|amemv)/i;
+            const NON_VIDEO_PATTERNS = /\.(png|jpg|jpeg|gif|webp|svg|ico|css|js|woff|ttf)(\?|$)/i;
+            const isVideoUrl = (u: string): boolean => {
+              if (NON_VIDEO_PATTERNS.test(u)) return false;
+              if (VIDEO_CDN_PATTERNS.test(u)) return true;
+              if (/\.mp4(\?|$)/i.test(u)) return true;
+              return false;
+            };
+
+            const videoUrls: string[] = [];
+            const addVideoUrl = (u: string) => {
               const clean = cleanUrl(u);
-              if (clean.startsWith('http') && !urls.includes(clean)) urls.push(clean);
+              if (clean.startsWith('http') && isVideoUrl(clean) && !videoUrls.includes(clean)) {
+                videoUrls.push(clean);
+              }
             };
 
             // 提取 awemeId（视频 ID）
             let awemeId = '';
             const url = window.location.href;
-            // /video/123456 或 modal_id=123456
             const videoMatch = url.match(/\/video\/(\d+)/);
             const modalMatch = url.match(/modal_id=(\d+)/);
             awemeId = videoMatch?.[1] ?? modalMatch?.[1] ?? '';
@@ -209,7 +221,7 @@ btnExtractScript.addEventListener('click', async () => {
                 const decoded = decodeURIComponent(renderScript.textContent);
                 const data = JSON.parse(decoded);
 
-                // 也从 RENDER_DATA 中提取 awemeId
+                // 从 RENDER_DATA 中提取 awemeId
                 if (!awemeId) {
                   const visited = new WeakSet();
                   const findId = (obj: unknown, depth: number): void => {
@@ -234,7 +246,7 @@ btnExtractScript.addEventListener('click', async () => {
                   findId(data, 0);
                 }
 
-                // 提取所有视频 URL
+                // 只提取经过校验的视频 URL（排除图片等非视频资源）
                 const visited2 = new WeakSet();
                 const traverse = (obj: unknown, depth: number): void => {
                   if (depth > 20 || !obj || typeof obj !== 'object') return;
@@ -243,7 +255,7 @@ btnExtractScript.addEventListener('click', async () => {
                   visited2.add(o);
                   if (Array.isArray(o.url_list)) {
                     for (const u of o.url_list) {
-                      if (typeof u === 'string') addUrl(u);
+                      if (typeof u === 'string') addVideoUrl(u);
                     }
                   }
                   for (const v of Object.values(o)) {
@@ -260,22 +272,27 @@ btnExtractScript.addEventListener('click', async () => {
                 };
                 traverse(data, 0);
 
-                // 正则兜底
-                if (urls.length === 0) {
-                  const pat = /https?:\/\/[^"'\s]+?(?:douyinvod|v\d+-|ixigua|bytevcloudcdn|bytecdn|snssdk|amemv)[^"'\s]*/gi;
+                // 正则兜底：只匹配视频 CDN 域名
+                if (videoUrls.length === 0) {
+                  const pat = /https?:\/\/[^"'\s]+?(?:douyinvod|bytevcloudcdn|bytecdn|amemv)[^"'\s]*/gi;
                   const matches = decoded.match(pat);
-                  if (matches) for (const m of matches) addUrl(m);
+                  if (matches) for (const m of matches) addVideoUrl(m);
                 }
               } catch { /* parse failed */ }
             }
 
-            // 从 video 标签提取
+            // 从 video 标签提取（这些一定是视频流）
             for (const el of Array.from(document.querySelectorAll('video, xg-video'))) {
               const src = el.getAttribute('src') || (el as HTMLVideoElement).currentSrc;
-              if (src) addUrl(src);
+              if (src) {
+                const clean = cleanUrl(src);
+                if (clean.startsWith('http') && !NON_VIDEO_PATTERNS.test(clean) && !videoUrls.includes(clean)) {
+                  videoUrls.push(clean);
+                }
+              }
             }
 
-            const best = urls.find(u => /\.mp4|mp4/i.test(u)) ?? urls[0];
+            const best = videoUrls.find(u => /\.mp4(\?|$)/i.test(u)) ?? videoUrls[0];
             if (!best && !awemeId) {
               return { ok: false, error: '无法从抖音页面提取视频地址，请确保已打开视频播放页' };
             }
@@ -284,7 +301,7 @@ btnExtractScript.addEventListener('click', async () => {
               ok: true,
               videoUrl: best ?? '',
               awemeId,
-              debug: `urls=${urls.length}, awemeId=${awemeId || 'none'}`,
+              debug: `urls=${videoUrls.length}, awemeId=${awemeId || 'none'}`,
             };
           } catch (e) {
             return { ok: false, error: String(e) };

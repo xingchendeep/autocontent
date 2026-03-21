@@ -9,6 +9,8 @@
     "http://localhost:3000/*",
     "*://*.bilibili.com/*",
     "*://*.douyin.com/*",
+    "*://*.iesdouyin.com/*",
+    "*://v.douyin.com/*",
     "*://*.kuaishou.com/*",
     "*://*.ixigua.com/*",
     "*://*.toutiao.com/*"

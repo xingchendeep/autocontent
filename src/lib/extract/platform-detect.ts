@@ -5,7 +5,7 @@ export function detectPlatform(url: string): SupportedVideoPlatform {
   try {
     const host = new URL(url).hostname.toLowerCase();
     if (host.includes('bilibili.com') || host.includes('b23.tv')) return 'bilibili';
-    if (host.includes('douyin.com')) return 'douyin';
+    if (host.includes('douyin.com') || host.includes('iesdouyin.com')) return 'douyin';
     if (host.includes('ixigua.com')) return 'ixigua';
     if (host.includes('xiaohongshu.com') || host.includes('xhslink.com')) return 'xiaohongshu';
     if (host.includes('weibo.com') || host.includes('weibo.cn')) return 'weibo';
