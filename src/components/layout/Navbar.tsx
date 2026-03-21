@@ -1,12 +1,14 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/auth/client';
 
 export default function Navbar() {
   const [user, setUser] = useState<{ email: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const pathname = usePathname();
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
@@ -15,6 +17,12 @@ export default function Navbar() {
       setLoading(false);
     });
   }, []);
+
+  // Hide global navbar on dashboard pages (dashboard has its own nav)
+  if (pathname.startsWith('/dashboard')) return null;
+
+  // Also hide on admin pages
+  if (pathname.startsWith('/admin')) return null;
 
   return (
     <nav className="border-b border-zinc-200 bg-white">

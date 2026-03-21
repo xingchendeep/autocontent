@@ -1,4 +1,5 @@
 import { getSession } from '@/lib/auth';
+import Link from 'next/link';
 import { DashboardNav } from '@/components/dashboard/DashboardNav';
 import { TeamContextSwitcher } from '@/components/dashboard/TeamContextSwitcher';
 import { UserMenu } from '@/components/dashboard/UserMenu';
@@ -20,6 +21,7 @@ export default async function DashboardLayout({
             <div className="mx-auto flex max-w-5xl items-center justify-between">
               <DashboardNav />
               <div className="flex shrink-0 items-center gap-4">
+                <Link href="/pricing" className="text-sm text-zinc-500 hover:text-zinc-900">定价</Link>
                 <TeamContextSwitcher />
                 {session && <UserMenu email={session.email} />}
               </div>
