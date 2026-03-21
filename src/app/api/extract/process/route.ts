@@ -61,19 +61,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     let result: { text: string; method: string; durationSeconds?: number; language?: string };
 
     if (platform === 'upload') {
-      // Upload: video_url is Supabase Storage publicUrl (海外)
-      // DashScope ASR 在阿里云中国区，直接访问海外 URL 可能失败
-      // 需要先代理下载到 DashScope OSS 再提交 ASR
-      const { proxyDownloadVideo, cleanupTempFile } = await import('@/lib/extract/video-proxy');
-      let proxyFileId: string | undefined;
-      try {
-        const proxy = await proxyDownloadVideo(videoUrl, 'upload');
-        proxyFileId = proxy.fileId;
-        const { transcribeAudio } = await import('@/lib/extract/asr-service');
-        result = await transcribeAudio(proxy.publicUrl, { isOssPrefix: proxy.isOssPrefix });
-      } finally {
-        if (proxyFileId) cleanupTempFile(proxyFileId).catch(() => {});
-      }
+      // Upload: video_url is already the direct file URL
+      const { transcribeAudio } = await import('@/lib/extract/asr-service');
+      result = await transcribeAudio(videoUrl);
     } else {
       const { extractVideoScript } = await import('@/lib/extract');
       // Use awemeId from payload (browser extension) or extract from URL
