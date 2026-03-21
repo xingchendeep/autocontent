@@ -58,6 +58,17 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
         body: JSON.stringify({ videoUrl }),
       });
 
+      if (!submitRes.ok) {
+        let errMsg = `请求失败（${submitRes.status}）`;
+        try {
+          const errJson = await submitRes.json();
+          errMsg = errJson.error?.message ?? errMsg;
+        } catch { /* response not JSON */ }
+        setStatus('error');
+        setMessage(errMsg);
+        return;
+      }
+
       const submitJson = await submitRes.json();
       if (!submitJson.success) {
         setStatus('error');
@@ -73,8 +84,13 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
       for (let i = 0; i < 40; i++) {
         await new Promise((r) => setTimeout(r, 3000));
 
-        const pollRes = await fetch(`/api/extract/${jobId}`);
-        const pollJson = await pollRes.json();
+        let pollJson: { success?: boolean; data?: { status: string; result?: { text: string; method: string }; error?: string } };
+        try {
+          const pollRes = await fetch(`/api/extract/${jobId}`);
+          pollJson = await pollRes.json();
+        } catch {
+          continue; // network hiccup, retry
+        }
 
         if (!pollJson.success) continue;
 
@@ -95,9 +111,10 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
 
       setStatus('error');
       setMessage('提取超时，请稍后重试');
-    } catch {
+    } catch (err) {
       setStatus('error');
-      setMessage('网络错误，请检查网络后重试');
+      const detail = err instanceof Error ? err.message : String(err);
+      setMessage(`请求异常：${detail}`);
     }
   }
 

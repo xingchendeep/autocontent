@@ -69,6 +69,17 @@ export default function FileUploadInput({ onExtracted, disabled = false }: FileU
         body: formData,
       });
 
+      if (!uploadRes.ok) {
+        let errMsg = `上传失败（${uploadRes.status}）`;
+        try {
+          const errJson = await uploadRes.json();
+          errMsg = errJson.error?.message ?? errMsg;
+        } catch { /* response not JSON */ }
+        setStatus('error');
+        setMessage(errMsg);
+        return;
+      }
+
       const uploadJson = await uploadRes.json();
       if (!uploadJson.success) {
         setStatus('error');
@@ -83,9 +94,14 @@ export default function FileUploadInput({ onExtracted, disabled = false }: FileU
       // Poll for result
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 3000));
-        const pollRes = await fetch(`/api/extract/${jobId}`);
-        const pollJson = await pollRes.json();
-        if (!pollJson.success) continue;
+        let pollJson: { success?: boolean; data?: { status: string; result?: { text: string }; error?: string } };
+        try {
+          const pollRes = await fetch(`/api/extract/${jobId}`);
+          pollJson = await pollRes.json();
+        } catch {
+          continue;
+        }
+        if (!pollJson.success || !pollJson.data) continue;
 
         const job = pollJson.data;
         if (job.status === 'completed' && job.result?.text) {
@@ -103,9 +119,10 @@ export default function FileUploadInput({ onExtracted, disabled = false }: FileU
 
       setStatus('error');
       setMessage('识别超时，请稍后重试');
-    } catch {
+    } catch (err) {
       setStatus('error');
-      setMessage('网络错误，请检查网络后重试');
+      const detail = err instanceof Error ? err.message : String(err);
+      setMessage(`请求异常：${detail}`);
     }
   }, [onExtracted]);
 
