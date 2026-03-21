@@ -124,21 +124,83 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // 通过内部 HTTP 调用 /api/extract/process 来异步处理
-  // 不能用 .catch() 异步启动，因为 Vercel 在响应返回后会冻结 serverless function
-  const processUrl = `${req.nextUrl.origin}/api/extract/process`;
-  fetch(processUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jobId, videoUrl, audioUrl, platform, awemeId }),
-  }).catch((err) => {
-    console.error('extract: failed to dispatch process request', err);
-  });
+  // 直接在当前请求中执行提取的第一阶段：
+  // 解析视频 URL → 代理下载 → 上传 OSS → 提交 ASR 任务 → 保存 task_id
+  // ASR 结果由前端 poll GET /api/extract/[id] 时逐步检查
+  await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
 
-  return NextResponse.json(
-    createSuccess({ jobId, status: 'pending', platform }, requestId),
-    { status: 202, headers: { 'x-request-id': requestId } },
-  );
+  try {
+    // B站：先尝试字幕 API（同步完成）
+    if (platform === 'bilibili') {
+      const { extractBilibiliSubtitle } = await import('@/lib/extract/bilibili-subtitle');
+      const subtitleResult = await extractBilibiliSubtitle(videoUrl);
+      if (subtitleResult) {
+        await db.from('extraction_jobs').update({
+          status: 'completed',
+          method: subtitleResult.method,
+          result_text: subtitleResult.text,
+          duration_seconds: subtitleResult.durationSeconds ?? null,
+          language: subtitleResult.language ?? null,
+        }).eq('id', jobId);
+
+        return NextResponse.json(
+          createSuccess({ jobId, status: 'completed', platform, result: { text: subtitleResult.text, method: subtitleResult.method } }, requestId),
+          { status: 200, headers: { 'x-request-id': requestId } },
+        );
+      }
+      // 字幕失败，继续 ASR
+    }
+
+    // ASR 流程：解析视频直链 → 代理下载 → 上传 OSS → 提交 ASR（不轮询）
+    let mediaUrl = audioUrl;
+
+    if (!mediaUrl) {
+      const { resolveVideoUrl } = await import('@/lib/extract');
+      const resolvedAwemeId = awemeId
+        ?? videoUrl.match(/\/video\/(\d+)/)?.[1]
+        ?? videoUrl.match(/modal_id=(\d+)/)?.[1]
+        ?? undefined;
+      mediaUrl = (await resolveVideoUrl(videoUrl, platform, resolvedAwemeId)) ?? undefined;
+    }
+
+    if (!mediaUrl) {
+      await db.from('extraction_jobs').update({
+        status: 'failed',
+        error_message: '无法自动获取视频地址。请尝试使用浏览器扩展提取，或换一个视频链接。',
+      }).eq('id', jobId);
+
+      return NextResponse.json(
+        createSuccess({ jobId, status: 'failed', platform, error: '无法自动获取视频地址' }, requestId),
+        { status: 200, headers: { 'x-request-id': requestId } },
+      );
+    }
+
+    const { proxyDownloadVideo, cleanupTempFile } = await import('@/lib/extract/video-proxy');
+    const proxy = await proxyDownloadVideo(mediaUrl, platform);
+
+    const { submitTranscriptionTask } = await import('@/lib/extract/asr-service');
+    const taskId = await submitTranscriptionTask(proxy.publicUrl, { isOssPrefix: proxy.isOssPrefix });
+
+    await db.from('extraction_jobs').update({ asr_task_id: taskId }).eq('id', jobId);
+
+    cleanupTempFile(proxy.fileId).catch(() => {});
+
+    return NextResponse.json(
+      createSuccess({ jobId, status: 'processing', platform }, requestId),
+      { status: 202, headers: { 'x-request-id': requestId } },
+    );
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    await db.from('extraction_jobs').update({
+      status: 'failed',
+      error_message: errorMessage,
+    }).eq('id', jobId);
+
+    return NextResponse.json(
+      createSuccess({ jobId, status: 'failed', platform, error: errorMessage }, requestId),
+      { status: 200, headers: { 'x-request-id': requestId } },
+    );
+  }
 }
 
 

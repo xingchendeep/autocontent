@@ -142,7 +142,25 @@ export default function VideoUrlInput({ onExtracted, disabled = false }: VideoUr
         return;
       }
 
-      const { jobId, platform } = submitJson.data as { jobId: string; platform: string };
+      const { jobId, platform, status: jobStatus, result, error: jobError } = submitJson.data as {
+        jobId: string; platform: string; status?: string;
+        result?: { text: string; method: string }; error?: string;
+      };
+
+      // POST 可能直接返回 completed（如 B站字幕）或 failed
+      if (jobStatus === 'completed' && result?.text) {
+        setStatus('success');
+        const method = result.method === 'subtitle_api' ? '字幕提取' : '语音识别';
+        setMessage(`✅ ${method}完成，内容已填入输入框`);
+        onExtracted(result.text);
+        return;
+      }
+      if (jobStatus === 'failed') {
+        setStatus('error');
+        setMessage(`❌ 提取失败：${jobError ?? '未知错误'}`);
+        return;
+      }
+
       setStatus('polling');
       setMessage(`正在提取视频脚本（${platform}），请稍候...`);
 

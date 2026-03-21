@@ -12,7 +12,7 @@ import {
   createError,
 } from '@/lib/errors';
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const bodySchema = z.object({
   publicUrl: z.string().url('无效的文件 URL'),
@@ -106,24 +106,36 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const jobId = (job as { id: string }).id;
 
-  // 通过内部 HTTP 调用 /api/extract/process 来异步处理
-  // 不能用 .catch() 异步启动，因为 Vercel 在响应返回后会冻结 serverless function
-  const processUrl = `${req.nextUrl.origin}/api/extract/process`;
-  fetch(processUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jobId,
-      videoUrl: publicUrl,
-      platform: 'upload',
-      storagePath,
-    }),
-  }).catch((err) => {
-    console.error('extract/upload: failed to dispatch process request', err);
-  });
+  // 直接提交 ASR 任务（upload 的 publicUrl 已经是 Supabase Storage 直链）
+  await db.from('extraction_jobs').update({ status: 'processing' }).eq('id', jobId);
+
+  try {
+    const { submitTranscriptionTask } = await import('@/lib/extract/asr-service');
+    const taskId = await submitTranscriptionTask(publicUrl);
+
+    await db.from('extraction_jobs').update({ asr_task_id: taskId }).eq('id', jobId);
+
+    // 清理 storage 文件（延迟，等 ASR 下载完）
+    // 实际上 ASR 是异步的，提交后 DashScope 会立即下载文件，所以可以稍后清理
+    // 但为安全起见，不在这里清理，让 ASR 完成后再清理
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    await db.from('extraction_jobs').update({
+      status: 'failed',
+      error_message: errorMessage,
+    }).eq('id', jobId);
+
+    // 清理 storage 文件
+    await db.storage.from('temp-videos').remove([storagePath]).catch(() => {});
+
+    return NextResponse.json(
+      createSuccess({ jobId, status: 'failed', platform: 'upload', error: errorMessage }, requestId),
+      { status: 200, headers: { 'x-request-id': requestId } },
+    );
+  }
 
   return NextResponse.json(
-    createSuccess({ jobId, status: 'pending', platform: 'upload' }, requestId),
+    createSuccess({ jobId, status: 'processing', platform: 'upload' }, requestId),
     { status: 202, headers: { 'x-request-id': requestId } },
   );
 }
