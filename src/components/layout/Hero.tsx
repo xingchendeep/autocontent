@@ -9,7 +9,7 @@ export default function Hero() {
   );
 
   useEffect(() => {
-    fetch('/api/admin/settings?keys=hero_title,hero_description')
+    fetch('/api/settings/public')
       .then((r) => r.json())
       .then((json) => {
         if (json.success && json.data) {
