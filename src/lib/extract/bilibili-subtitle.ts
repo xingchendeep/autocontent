@@ -2,18 +2,15 @@ import { logger } from '@/lib/logger';
 import type { ExtractionResult } from './types';
 
 /**
- * B站字幕 API 提取器
- * 通过 B站公开的视频信息接口获取字幕 JSON
+ * B站字幕提取器
+ * 优先使用 dm/view 接口（不需要 cookie，支持 AI 生成字幕）
+ * Fallback 到 player/v2 接口
  */
 
 /** 从 B站 URL 提取 bvid */
 function extractBvid(url: string): string | null {
-  // 匹配 /video/BVxxxxxx 格式
   const bvMatch = url.match(/\/video\/(BV[\w]+)/i);
-  if (bvMatch) return bvMatch[1];
-
-  // 匹配 b23.tv 短链（需要先跟随重定向，这里只做基本匹配）
-  return null;
+  return bvMatch ? bvMatch[1] : null;
 }
 
 /** 从 B站 URL 提取 aid（av号） */
@@ -50,7 +47,7 @@ export async function extractBilibiliSubtitle(videoUrl: string): Promise<Extract
   }
 
   try {
-    // Step 1: 获取 cid 和 aid（如果只有 bvid）
+    // Step 1: 获取 cid 和 aid
     const params = bvid ? `bvid=${bvid}` : `aid=${aid}`;
     const viewRes = await fetch(
       `https://api.bilibili.com/x/web-interface/view?${params}`,
@@ -87,46 +84,46 @@ export async function extractBilibiliSubtitle(videoUrl: string): Promise<Extract
       },
     );
 
-    if (!dmRes.ok) {
-      logger.warn('bilibili-subtitle: dm/view API failed', { status: dmRes.status });
-      return null;
-    }
+    if (dmRes.ok) {
+      const dmJson = (await dmRes.json()) as {
+        code: number;
+        data?: { subtitle?: { subtitles?: Array<{ subtitle_url: string; lan: string; lan_doc: string }> } };
+      };
 
-    const dmJson = (await dmRes.json()) as {
-      code: number;
-      data?: { subtitle?: { subtitles?: Array<{ subtitle_url: string; lan: string; lan_doc: string }> } };
-    };
-
-    if (dmJson.code !== 0 || !dmJson.data?.subtitle?.subtitles?.length) {
-      logger.info('bilibili-subtitle: no subtitles available via dm/view', { videoUrl });
-
-      // Fallback: 尝试 player/v2 接口（某些视频可能只在这个接口有字幕）
-      const playerRes = await fetch(
-        `https://api.bilibili.com/x/player/v2?${params}&cid=${cid}`,
-        {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            Referer: 'https://www.bilibili.com',
-          },
-        },
-      );
-      if (playerRes.ok) {
-        const playerJson = (await playerRes.json()) as { code: number; data?: BiliPlayerInfo };
-        if (playerJson.code === 0 && playerJson.data?.subtitle?.subtitles?.length) {
-          return await fetchSubtitleContent(playerJson.data.subtitle.subtitles);
-        }
+      if (dmJson.code === 0 && dmJson.data?.subtitle?.subtitles?.length) {
+        logger.info('bilibili-subtitle: found subtitles via dm/view', {
+          count: dmJson.data.subtitle.subtitles.length,
+        });
+        return await fetchSubtitleContent(dmJson.data.subtitle.subtitles);
       }
-
-      return null;
     }
 
-    return await fetchSubtitleContent(dmJson.data.subtitle.subtitles);
+    // Fallback: 尝试 player/v2 接口
+    logger.info('bilibili-subtitle: dm/view returned no subtitles, trying player/v2', { videoUrl });
+    const playerRes = await fetch(
+      `https://api.bilibili.com/x/player/v2?${params}&cid=${cid}`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          Referer: 'https://www.bilibili.com',
+        },
+      },
+    );
+
+    if (playerRes.ok) {
+      const playerJson = (await playerRes.json()) as { code: number; data?: BiliPlayerInfo };
+      if (playerJson.code === 0 && playerJson.data?.subtitle?.subtitles?.length) {
+        return await fetchSubtitleContent(playerJson.data.subtitle.subtitles);
+      }
+    }
+
+    logger.info('bilibili-subtitle: no subtitles available', { videoUrl });
+    return null;
   } catch (err) {
     logger.error('bilibili-subtitle: extraction failed', { videoUrl, error: String(err) });
     return null;
   }
 }
-
 
 async function fetchSubtitleContent(
   subtitles: Array<{ subtitle_url: string; lan: string; lan_doc: string }>,
@@ -137,6 +134,7 @@ async function fetchSubtitleContent(
 
   let subtitleUrl = zhSub.subtitle_url;
   if (subtitleUrl.startsWith('//')) subtitleUrl = 'https:' + subtitleUrl;
+  if (subtitleUrl.startsWith('http://')) subtitleUrl = subtitleUrl.replace('http://', 'https://');
 
   const subRes = await fetch(subtitleUrl, {
     headers: {
