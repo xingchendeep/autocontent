@@ -38,7 +38,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       const timer = setTimeout(() => {
         timersRef.current.delete(id);
         setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 3000);
+      }, 5000);
       timersRef.current.set(id, timer);
     },
     [],
