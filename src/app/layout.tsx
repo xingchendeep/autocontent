@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Analytics } from '@vercel/analytics/next';
 import PostHogProvider from '@/components/layout/PostHogProvider';
 import Navbar from '@/components/layout/Navbar';
+import Footer from '@/components/layout/Footer';
 import { getSiteSettingWithDefault } from '@/lib/admin/site-settings';
 import './globals.css';
 
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <PostHogProvider>
           <Navbar />
           {children}
+          <Footer />
         </PostHogProvider>
         <Analytics />
       </body>
