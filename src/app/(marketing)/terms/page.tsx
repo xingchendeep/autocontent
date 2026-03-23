@@ -113,7 +113,7 @@ export default function TermsPage() {
           <h2 className="mb-3 text-base font-semibold text-zinc-900">10. 联系方式</h2>
           <p>
             如果您对本服务条款有任何疑问，请通过电子邮件联系我们：
-            <a href="mailto:[email]" className="text-blue-600 hover:underline">[email]</a>
+            <a href="mailto:zixingwenhua2024@outlook.com" className="text-blue-600 hover:underline">zixingwenhua2024@outlook.com</a>
           </p>
         </section>
       </div>

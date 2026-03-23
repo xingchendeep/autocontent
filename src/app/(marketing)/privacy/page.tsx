@@ -100,7 +100,7 @@ export default function PrivacyPage() {
           <h2 className="mb-3 text-base font-semibold text-zinc-900">9. 联系我们</h2>
           <p>
             如果您对本隐私政策有任何疑问，请通过电子邮件联系我们：
-            <a href="mailto:[email]" className="text-blue-600 hover:underline">[email]</a>
+            <a href="mailto:zixingwenhua2024@outlook.com" className="text-blue-600 hover:underline">zixingwenhua2024@outlook.com</a>
           </p>
         </section>
       </div>
