@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { getPlanCapability } from '@/lib/billing/plan-capability';
-import { createTeam, listTeamsForUser } from '@/lib/teams';
+import { createTeam, listTeamsForUser, type TeamSummary } from '@/lib/teams';
 import {
   ERROR_CODES,
   ERROR_STATUS,

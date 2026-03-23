@@ -66,22 +66,100 @@ export async function createTeam(ownerId: string, name: string): Promise<Team> {
 }
 
 /**
- * Returns all teams the user belongs to (as any role).
+ * Returns all teams the user belongs to, including the user's role and member count.
  */
-export async function listTeamsForUser(userId: string): Promise<Team[]> {
+export async function listTeamsForUser(userId: string): Promise<TeamSummary[]> {
   const db = createServiceRoleClient();
 
   const { data, error } = await db
     .from('team_members')
-    .select('teams(id, name, owner_id, created_at, updated_at)')
+    .select('role, teams(id, name, owner_id, created_at, updated_at)')
     .eq('user_id', userId);
 
   if (error) throw new Error(`listTeamsForUser: ${error.message}`);
 
-  return (data ?? [])
-    .map((row: { teams: unknown }) => row.teams)
-    .filter((t): t is Record<string, unknown> => Boolean(t))
-    .map(mapTeam);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = (data ?? []).filter((row: any) => Boolean(row.teams));
+
+  // Gather team IDs to fetch member counts
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const teamIds = rows.map((row: any) => {
+    const t = Array.isArray(row.teams) ? row.teams[0] : row.teams;
+    return t.id as string;
+  });
+
+  // Fetch member counts per team
+  const countMap: Record<string, number> = {};
+  if (teamIds.length > 0) {
+    const { data: countData } = await db
+      .from('team_members')
+      .select('team_id')
+      .in('team_id', teamIds);
+
+    for (const r of countData ?? []) {
+      countMap[r.team_id] = (countMap[r.team_id] ?? 0) + 1;
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return rows.map((row: any) => {
+    const t = Array.isArray(row.teams) ? row.teams[0] : row.teams;
+    return {
+      id: t.id as string,
+      name: t.name as string,
+      role: row.role as TeamRole,
+      memberCount: countMap[t.id as string] ?? 0,
+    };
+  });
+}
+
+export interface TeamSummary {
+  id: string;
+  name: string;
+  role: TeamRole;
+  memberCount: number;
+}
+
+/**
+ * Returns the members of a team with their email addresses.
+ */
+export async function getTeamMembers(teamId: string): Promise<TeamMemberWithEmail[]> {
+  const db = createServiceRoleClient();
+
+  const { data, error } = await db
+    .from('team_members')
+    .select('id, team_id, user_id, role, joined_at')
+    .eq('team_id', teamId)
+    .order('joined_at', { ascending: true });
+
+  if (error) throw new Error(`getTeamMembers: ${error.message}`);
+
+  // Fetch emails from auth.users via service role
+  const members: TeamMemberWithEmail[] = [];
+  for (const row of data ?? []) {
+    let email = '';
+    try {
+      const { data: userData } = await db.auth.admin.getUserById(row.user_id);
+      email = userData?.user?.email ?? '';
+    } catch {
+      // If we can't get the email, leave it empty
+    }
+    members.push({
+      userId: row.user_id,
+      email,
+      role: row.role as TeamRole,
+      joinedAt: row.joined_at,
+    });
+  }
+
+  return members;
+}
+
+export interface TeamMemberWithEmail {
+  userId: string;
+  email: string;
+  role: TeamRole;
+  joinedAt: string;
 }
 
 /**
